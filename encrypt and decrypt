@@ -1,0 +1,407 @@
+"use strict";
+
+(() => {
+  var __defProp = Object.defineProperty;
+  var __name = (target, value) =>
+    __defProp(target, "name", { value, configurable: true });
+
+  // src/worker.js
+  (() => {
+    var __defProp2 = Object.defineProperty;
+    var __name2 = /* @__PURE__ */ __name(
+      (target, value) =>
+        __defProp2(target, "name", { value, configurable: true }),
+      "__name"
+    );
+    addEventListener("fetch", (event) => {
+      event.respondWith(handleRequest(event.request));
+    });
+
+    async function handleRequest(request) {
+      const url = new URL(request.url);
+      const path = url.pathname;
+      console.log("Received request:", request.method, path);
+
+      // Dynamically handle CORS
+      const origin = request.headers.get("Origin");
+      const corsHeaders = {
+        "Access-Control-Allow-Origin": origin || "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Max-Age": "86400", // Cache preflight for 1 day
+      };
+
+      if (request.method === "OPTIONS") {
+        return new Response(null, {
+          headers: corsHeaders,
+        });
+      }
+
+      if (path === "/api/consent" && request.method === "POST") {
+        return await handleConsentRequest(request, corsHeaders);
+      }
+
+      if (path === "/cmp-script.js") {
+        return new Response(CMP_SCRIPT, {
+          headers: {
+            "Content-Type": "application/javascript",
+            ...corsHeaders,
+          },
+        });
+      }
+
+      return new Response("CMP worker is running", {
+        status: 200,
+        headers: corsHeaders,
+      });
+    }
+
+    __name(handleRequest, "handleRequest");
+    __name2(handleRequest, "handleRequest");
+
+    // Encryption and decryption helper functions
+    async function generateKey() {
+      const key = await crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+      );
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      return { secretKey: key, iv };
+    }
+
+    async function encryptData(data, key) {
+      const encoder = new TextEncoder();
+      const encodedData = encoder.encode(data);
+      const encrypted = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: key.iv },
+        key.secretKey,
+        encodedData
+      );
+      return {
+        encryptedData: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
+        iv: Array.from(key.iv),
+      };
+    }
+
+    async function decryptData(encrypted, key) {
+      const encryptedBuffer = Uint8Array.from(atob(encrypted.encryptedData), (c) =>
+        c.charCodeAt(0)
+      );
+      const ivBuffer = new Uint8Array(encrypted.iv);
+      const decrypted = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: ivBuffer },
+        key.secretKey,
+        encryptedBuffer
+      );
+      const decoder = new TextDecoder();
+      return decoder.decode(decrypted);
+    }
+
+    async function handleConsentRequest(request, corsHeaders) {
+      const headers = request.headers;
+      const ipAddress = headers.get("CF-Connecting-IP");
+    
+      if (request.method === "POST") {
+        try {
+          const data = await request.json();
+          const { userId, preferences, policyVersion } = data;
+          const timestamp = new Date().toISOString();
+    
+          // Generate encryption key
+          const encryptionKey = await generateKey();
+    
+          // Encrypt data
+          const encryptedUserId = await encryptData(userId, encryptionKey);
+          const encryptedIpAddress = await encryptData(ipAddress || "Unknown", encryptionKey);
+          const encryptedPreferences = await encryptData(JSON.stringify(preferences), encryptionKey);
+    
+          // Decrypt preferences (for debugging and saving)
+          const decryptedPreferences = JSON.parse(await decryptData(encryptedPreferences, encryptionKey));
+          console.log("Decrypted Preferences:", decryptedPreferences);
+    
+          // Save decrypted data to KV
+          const consentData = {
+            user_id: userId, // Not encrypted, human-readable
+            ip_address: ipAddress || "Unknown", // Not encrypted, human-readable
+            consent_preferences: decryptedPreferences, // Fully decrypted, human-readable
+            timestamp,
+            policy_version: policyVersion || "1.0",
+          };
+    
+          console.log("Consent data to save:", consentData);
+    
+          // Save consent data to KV
+          await CMP_STORAGE.put(userId, JSON.stringify(consentData));
+    
+          // Prepare response
+          const response = new Response("Preferences saved", {
+            status: 200,
+            headers: corsHeaders,
+          });
+    
+          response.headers.set(
+            "Set-Cookie",
+            `consent-given=true; path=/; max-age=31536000; Secure; SameSite=Strict`
+          );
+          response.headers.set(
+            "Set-Cookie",
+            `consent-preferences=${encodeURIComponent(
+              JSON.stringify(preferences)
+            )}; path=/; max-age=31536000; Secure; SameSite=Strict`
+          );
+          response.headers.set(
+            "Set-Cookie",
+            `consent-timestamp=${new Date().toISOString()}; path=/; max-age=31536000; Secure; SameSite=Strict`
+          );
+          response.headers.set(
+            "Set-Cookie",
+            `consent-policy-version=1.2; path=/; max-age=31536000; Secure; SameSite=Strict`
+          );
+    
+          return response;
+        } catch (error) {
+          console.error("Error processing consent:", error);
+          return new Response("Error processing consent", {
+            status: 500,
+            headers: corsHeaders,
+          });
+        }
+      }
+    
+      if (request.method === "GET") {
+        const userId = new URL(request.url).searchParams.get("userId");
+    
+        // Fetch consent data from KV
+        const encryptedConsentData = await CMP_STORAGE.get(userId);
+    
+        if (!encryptedConsentData) {
+          return new Response("No preferences found", {
+            status: 404,
+            headers: corsHeaders,
+          });
+        }
+    
+        console.log("Encrypted data from KV:", encryptedConsentData);
+    
+        // Generate encryption key
+        const encryptionKey = await generateKey();
+    
+        // Decrypt the data
+        const consentData = JSON.parse(encryptedConsentData); // Decrypt object fields individually
+        consentData.user_id = await decryptData(consentData.user_id, encryptionKey);
+        consentData.ip_address = await decryptData(consentData.ip_address, encryptionKey);
+        consentData.consent_preferences = JSON.parse(
+          await decryptData(JSON.stringify(consentData.consent_preferences), encryptionKey)
+        );
+    
+        console.log("Decrypted data to return:", consentData);
+    
+        // Return decrypted consent data
+        return new Response(JSON.stringify(consentData), {
+          status: 200,
+          headers: corsHeaders,
+        });
+      }
+    
+      return new Response("Invalid method", {
+        status: 405,
+        headers: corsHeaders,
+      });
+    }
+    
+    
+    __name(handleConsentRequest, "handleConsentRequest");
+    __name2(handleConsentRequest, "handleConsentRequest");
+
+    const CMP_SCRIPT = `(async function () {
+      let consentState = {};
+      let blockedScripts = new Set();
+      let blockedRequests = new Set();
+      let observer;
+
+      async function hashData(data) {
+        const encoder = new TextEncoder();
+        const dataBuffer = encoder.encode(data);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", dataBuffer);
+        return Array.from(new Uint8Array(hashBuffer))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+      }
+
+      async function generateKey() {
+        const key = await crypto.subtle.generateKey(
+          { name: "AES-GCM", length: 256 },
+          true,
+          ["encrypt", "decrypt"]
+        );
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        return { secretKey: key, iv };
+      }
+
+      async function encryptData(data, key) {
+        const encoder = new TextEncoder();
+        const encodedData = encoder.encode(data);
+        const encrypted = await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv: key.iv },
+          key.secretKey,
+          encodedData
+        );
+        return {
+          encryptedData: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
+          iv: Array.from(key.iv),
+        };
+      }
+
+      async function decryptData(encrypted, key) {
+        const encryptedBuffer = Uint8Array.from(atob(encrypted.encryptedData), (c) =>
+          c.charCodeAt(0)
+        );
+        const ivBuffer = new Uint8Array(encrypted.iv);
+        const decrypted = await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: ivBuffer },
+          key.secretKey,
+          encryptedBuffer
+        );
+        const decoder = new TextDecoder();
+        return decoder.decode(decrypted);
+      }
+
+      function loadConsentState() {
+        const consentGiven = localStorage.getItem("consent-given");
+        if (consentGiven === "true") {
+          consentState = JSON.parse(localStorage.getItem("consent-preferences")) || {};
+          consentState.timestamp = localStorage.getItem("consent-timestamp");
+          consentState.policy_version = localStorage.getItem("consent-policy-version");
+        }
+      }
+
+      async function saveConsentState(preferences) {
+        const userId = await hashData(localStorage.getItem("user-id") || "anonymous-user");
+        const encryptionKey = await generateKey();
+
+        const encryptedPreferences = await encryptData(
+          JSON.stringify(preferences),
+          encryptionKey
+        );
+        localStorage.setItem("consent-given", "true");
+        localStorage.setItem("consent-preferences", JSON.stringify(encryptedPreferences));
+        localStorage.setItem("consent-timestamp", new Date().toISOString());
+        localStorage.setItem("consent-policy-version", "1.2");
+
+        fetch("https://cmp-webflow-worker.web-8fb.workers.dev/api/consent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId,
+            preferences: encryptedPreferences,
+            policyVersion: "1.2",
+          }),
+        })
+          .then((response) => response.text())
+          .then((data) => console.log("Response from server:", data))
+          .catch((error) => console.error("Error sending consent data:", error));
+      }
+
+      function blockAnalyticsRequests() {
+        const blockedUrls = ["google-analytics.com", "matomo.org", "facebook.com/tr"];
+        self.addEventListener("fetch", (event) => {
+          const requestUrl = event.request.url;
+          if (
+            blockedUrls.some((url) => requestUrl.includes(url)) &&
+            (!consentState.analytics || consentState.analytics === "false")
+          ) {
+            event.respondWith(new Response(null, { status: 204 }));
+            blockedRequests.add(requestUrl);
+            console.log("Blocked analytics request:", requestUrl);
+          }
+        });
+      }
+
+      function blockDynamicScripts() {
+        observer = new MutationObserver((mutations) => {
+          mutations.forEach((mutation) => {
+            if (mutation.type === "childList") {
+              mutation.addedNodes.forEach((node) => {
+                if (node.tagName === "SCRIPT" && node.src) {
+                  if (
+                    blockedScripts.has(node.src) ||
+                    (!consentState.analytics &&
+                      /google-analytics|matomo|facebook/.test(node.src))
+                  ) {
+                    blockedScripts.add(node.src);
+                    node.remove();
+                    console.log("Blocked dynamic script:", node.src);
+                  }
+                }
+              });
+            }
+          });
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+      }
+
+      function updateConsentState(preferences) {
+        consentState = preferences;
+
+        localStorage.setItem("consent-preferences", JSON.stringify(preferences));
+        localStorage.setItem("consent-timestamp", new Date().toISOString());
+        localStorage.setItem("consent-policy-version", "1.2");
+
+        saveConsentState(preferences);
+      }
+
+      function revalidateBlockedScripts() {
+        if (blockedScripts.size > 0) {
+          blockedScripts.forEach((scriptUrl) => {
+            console.log("Revalidating blocked script:", scriptUrl);
+          });
+        }
+
+        if (blockedRequests.size > 0) {
+          blockedRequests.forEach((requestUrl) => {
+            console.log("Revalidating blocked request:", requestUrl);
+          });
+        }
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        loadConsentState();
+        blockAnalyticsRequests();
+        blockDynamicScripts();
+
+        setInterval(revalidateBlockedScripts, 5000);
+
+        const acceptButton = document.querySelector(".accept-btn");
+        const toggleConsentButton = document.getElementById("toggle-consent-btn");
+        const consentBanner = document.getElementById("consent-banner");
+
+        if (acceptButton) {
+          acceptButton.addEventListener("click", function () {
+            updateConsentState({
+              necessary: document.getElementById("necessary-checkbox")?.checked,
+              preferences: document.getElementById("preferences-checkbox")?.checked,
+              analytics: document.getElementById("analytics-checkbox")?.checked,
+              marketing: document.getElementById("marketing-checkbox")?.checked,
+            });
+
+            if (consentBanner) {
+              consentBanner.style.display = "none";
+            }
+          });
+        }
+
+        if (toggleConsentButton) {
+          toggleConsentButton.addEventListener("click", function () {
+            if (consentBanner) {
+              consentBanner.style.display = "block";
+            }
+          });
+        }
+      });
+
+      window.updateConsentState = updateConsentState;
+    })();
+    `;
+  })();
+})();
