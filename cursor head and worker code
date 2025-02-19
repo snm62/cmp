@@ -1,0 +1,860 @@
+"use strict";
+const CMP_SCRIPT = `(async function () {
+  let consentState = {};
+  let observer;
+function loadConsentState() {
+    const consentGiven = localStorage.getItem("consent-given");
+    if (consentGiven === "true") {
+        consentState = JSON.parse(localStorage.getItem("consent-preferences"))?.encryptedData || {};
+        consentState.timestamp = localStorage.getItem("consent-timestamp");
+        consentState.policy_version = localStorage.getItem("consent-policy-version");
+    } else {
+        consentState = {};  // Ensure it remains empty if no consent was given
+    }
+
+    console.log("Loaded Consent State:", consentState);
+    blockMetaFunctions(); // Ensure Meta is blocked on load
+    blockAnalyticsRequests(); // Block analytics requests immediately after loading consent
+}
+
+function blockAnalyticsRequests() {
+  // Fetch Blocking (Improved)
+  const originalFetch = window.fetch;
+  window.fetch = function (...args) {
+      const url = args[0];
+      if (typeof url === "string" && !consentState.analytics && isSuspiciousResource(url)) {
+          console.warn("Fetch request blocked: " + url);
+          return Promise.resolve(new Response(null, { status: 204, statusText: 'No Content' })); // More robust empty response
+      }
+      return originalFetch.apply(this, args);
+  };
+ 
+// XHR Blocking (Improved)
+const originalXHR = window.XMLHttpRequest;
+window.XMLHttpRequest = function() {
+    const xhr = new originalXHR();
+    xhr.open = function(method, url) {
+        if (typeof url === "string" && !consentState.analytics && isSuspiciousResource(url)) {
+            console.warn("XHR request blocked: " + url);
+            return; // Abort the request
+        }
+        originalXHR.prototype.open.apply(this, arguments);
+    };
+    return xhr;
+};
+}
+
+
+function blockMetaFunctions() {
+  if (!consentState.analytics) {
+    if (!window.fbqBlocked) {
+      window.fbqBlocked = window.fbq || function () {
+        console.warn("fbq function call blocked");
+        window.fbq.queue.push(arguments);
+      };
+      window.fbqBlocked.queue = [];
+      window.fbq = window.fbqBlocked;
+      console.log("Meta fbq function blocked.");
+    }
+  } else {
+    if (window.fbq === window.fbqBlocked) {
+      delete window.fbqBlocked;
+      delete window.fbq;
+      
+      // Delay the loading of the Meta script
+      delayExecution(() => {
+        loadScript("https://connect.facebook.net/en_US/fbevents.js", initializeFbq);
+        console.log("Meta fbq function restored after delay.");
+      }, 5000); // 5000ms (5 seconds) delay
+    }
+  }
+}
+
+
+function initializeFbq() {
+  if (window.fbq && window.fbq.queue) {
+    window.fbq.queue.forEach(args => window.fbq.apply(null, args));
+  }
+  console.log("Meta fbq function initialized.");
+}
+let initialBlockingEnabled = true;  // Flag to control initial blocking
+
+function blockAllInitialRequests() {
+const originalFetch = window.fetch;
+window.fetch = function (...args) {
+    const url = args[0];
+    if (initialBlockingEnabled && isSuspiciousResource(url)) {
+        console.warn("Blocked initial fetch request: " + url);
+        return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    return originalFetch.apply(this, args);
+};
+
+const originalXHR = window.XMLHttpRequest;
+window.XMLHttpRequest = function() {
+    const xhr = new originalXHR();
+    xhr.open = function(method, url) {
+        if (initialBlockingEnabled && isSuspiciousResource(url)) {
+            console.warn("Blocked initial XHR request: " + url);
+            return;
+        }
+        originalXHR.prototype.open.apply(this, arguments);
+    };
+    return xhr;
+};
+
+const originalImage = window.Image;
+window.Image = function(...args) {
+    const img = new originalImage(...args);
+    img.setAttribute = function(name, value) {
+        if (name === 'src' && initialBlockingEnabled && isSuspiciousResource(value)) {
+            console.warn("Blocked tracking pixel: " + value);
+            return;
+        }
+        return originalSetAttribute.apply(this, arguments);
+    };
+    return img;
+};
+}   
+
+function getClientIdentifier() {
+return window.location.hostname; // Use hostname as the unique client identifier
+}
+
+  async function hashData(data) {
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(data);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", dataBuffer);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  async function generateKey() {
+    const key = await crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"]
+    );
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const exportedKey = await crypto.subtle.exportKey("raw", key);
+    return { secretKey: exportedKey, iv };
+  }
+
+  async function encryptData(data, key, iv) {
+    const encoder = new TextEncoder();
+    const encodedData = encoder.encode(data);
+    const importedKey = await crypto.subtle.importKey(
+      "raw",
+      key,
+      { name: "AES-GCM" },
+      false,
+      ["encrypt"]
+    );
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: iv },
+      importedKey,
+      encodedData
+    );
+    return btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+  }
+
+  function getCookie(name) {
+    const cookieString = document.cookie;
+    if (!cookieString) return null;
+    
+    const cookies = Object.fromEntries(
+        cookieString.split("; ").map(c => c.split("="))
+    );
+    
+    return cookies[name] || null;
+}
+
+
+ // In the saveConsentState function
+  async function saveConsentState(preferences){
+    const clientId = getClientIdentifier(); 
+    const visitorId = getCookie("visitorId");
+    const policyVersion = "1.2";
+    const encryptionKey = await generateKey();
+    const encryptedVisitorId = await encryptData(visitorId, encryptionKey.secretKey, encryptionKey.iv);
+    const encryptedPreferences = await encryptData(JSON.stringify(preferences), encryptionKey.secretKey, encryptionKey.iv);
+    console.log("Encrypted Preferences:", encryptedPreferences);
+    console.log("Encrypted VisitorId:", encryptedVisitorId);
+    localStorage.setItem("consent-given", "true");
+    localStorage.setItem("consent-preferences", JSON.stringify({
+      encryptedData: encryptedPreferences,
+      iv: Array.from(encryptionKey.iv),
+      key: Array.from(new Uint8Array(encryptionKey.secretKey))
+    }));
+    localStorage.setItem("consent-timestamp", new Date().toISOString());
+    localStorage.setItem("consent-policy-version", "1.2");
+    const payload = {
+      clientId, 
+      visitorId: { 
+          encryptedData: encryptedVisitorId, 
+          iv: Array.from(encryptionKey.iv), 
+          key: Array.from(new Uint8Array(encryptionKey.secretKey)) 
+      },
+      preferences: { 
+          encryptedData: encryptedPreferences, 
+          iv: Array.from(encryptionKey.iv), 
+          key: Array.from(new Uint8Array(encryptionKey.secretKey)) 
+      },
+      policyVersion
+  };
+
+  console.log("Sending payload:", JSON.stringify(payload, null, 2));
+ 
+       
+  try {
+    // Step 1: Request authentication token
+    const tokenResponse = await fetch("https://app.consentbit.com/request-token");
+    const tokenData = await tokenResponse.json();
+    const token = tokenData.token;
+    
+    if (!token) {
+        console.error("Failed to retrieve authentication token.");
+        return;
+    }
+
+    console.log("Received token:", token);
+
+    // Step 2: Send consent data with token
+    const response = await fetch("https://app.consentbit.com/consent", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-Request-Token": token  // Attach the received token
+        },
+        body: JSON.stringify(payload),
+    });
+
+    const text = await response.text();
+    console.log("Server response:", response.status, text);
+} catch (error) {
+    console.error("Error sending consent data:", error);
+}
+}
+  
+function isSuspiciousResource(url) { // Correct function name
+    const suspiciousPatterns = /analytics|track|collect|metrics|pageview|stat|trackpageview|pixel|doubleclick|adservice|adwords|adsense|connect\.facebook\.net|fbevents\.js|facebook|meta|graph\.facebook\.com|business\.facebook\.com|pixel|quantserve|scorecardresearch/;
+    return suspiciousPatterns.test(url);
+}
+
+const headObserver = new MutationObserver(mutations => {
+  mutations.forEach(mutation => {
+      mutation.addedNodes.forEach(node => {
+          if (node.tagName === 'SCRIPT' && isSuspiciousResource(node.src)) {
+              console.warn("Blocked tracking script before execution:", node.src);
+              node.remove(); // Remove the script before it runs
+          }
+      });
+  });
+});
+
+headObserver.observe(document.head, { childList: true });
+
+const blockedScripts = []; // Array to store blocked script elements
+
+function createPlaceholderScripts() {
+    const allScripts = document.querySelectorAll('script');
+    allScripts.forEach(script => {
+        if (isSuspiciousResource(script.src)) {
+            const placeholder = document.createElement('script');
+            placeholder.type = 'text/placeholder'; // Mark as placeholder
+            placeholder.dataset.src = script.src; // Store original source
+            placeholder.dataset.async = script.async; // Store original async
+            script.parentNode.replaceChild(placeholder, script); // Replace with placeholder
+            blockedScripts.push(placeholder);
+            console.warn("Placeholder created for:", script.src);
+        }
+    });
+}
+
+
+function blockDynamicScripts() {
+  if (observer) observer.disconnect();
+  observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+          mutation.addedNodes.forEach((node) => {
+              if (node.tagName === "SCRIPT" && !consentState.analytics && isSuspiciousResource(node.src)) {
+                  console.warn("Dynamically injected script blocked: " + (node.src || "inline"));
+                  node.remove();
+              }
+              if (node.tagName === "IFRAME" && !consentState.analytics && isSuspiciousResource(node.src)) {
+                  console.warn("Dynamically injected iframe blocked: " + node.src);
+                  node.remove();
+              }
+              // Block dynamically added images (for tracking pixels)
+              if (node.tagName === "IMG" && !consentState.analytics && isSuspiciousResource(node.src)) {
+                  console.warn("Dynamically injected image blocked: " + node.src);
+                  node.remove();
+              }
+          });
+      });
+  });
+
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+function scanAndBlockScripts() {
+  const scripts = document.querySelectorAll("script");
+  scripts.forEach((script) => {
+      if (isSuspiciousResource(script.src) && !consentState.analytics) {
+          console.warn("Blocking script: " + script.src);
+          script.remove();
+      }
+  });
+}
+
+function revalidateBlockedScripts() {
+  if (!consentState.analytics) {
+      console.log("Re-validating blocked scripts...");
+      scanAndBlockScripts();
+      blockDynamicScripts();
+  }
+}
+
+function updateConsentState(preferences) {
+  consentState = preferences;
+  saveConsentState(preferences);
+  if (preferences.analytics) {
+      unblockScripts();
+  } else {
+      scanAndBlockScripts();
+      blockAnalyticsRequests();
+      blockDynamicScripts();
+  }
+  blockMetaFunctions(); // Add this line
+}
+
+function unblockScripts() {
+  const blockedScripts = document.querySelectorAll('script[type="javascript/blocked"]');
+  blockedScripts.forEach((script) => {
+      console.log("Unblocking script:", script.src);
+      const newScript = document.createElement("script");
+      newScript.src = script.src;
+      newScript.async = true;
+      document.head.appendChild(newScript);
+      script.remove();
+  });
+
+  if (observer) {
+      observer.disconnect();
+  }
+}
+
+function loadScript(src, callback) {
+  const script = document.createElement("script");
+  script.src = src;
+  script.async = true;
+  script.onload = callback;
+  document.head.appendChild(script);
+  console.log("Script loaded: " + src);
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+loadConsentState();
+blockMetaFunctions();  // Block Meta Pixel first
+blockAllInitialRequests(); // Prevent analytics from sending data 
+scanAndBlockScripts(); // Scan for scripts and remove if needed
+blockAnalyticsRequests(); // Block fetch/XHR requests
+blockDynamicScripts(); // Ensure no new scripts get added later
+
+// Revalidate every 5 seconds to catch late-injected scripts
+setInterval(revalidateBlockedScripts, 5000);
+
+const acceptButton = document.querySelector(".accept-btn");
+const toggleConsentButton = document.getElementById("toggle-consent-btn");
+const consentBanner = document.getElementById("consent-banner");
+
+if (acceptButton) {
+    acceptButton.addEventListener("click", function () {
+        updateConsentState({
+            necessary: document.getElementById("necessary-checkbox")?.checked,
+            preferences: document.getElementById("preferences-checkbox")?.checked,
+            analytics: document.getElementById("analytics-checkbox")?.checked,
+            marketing: document.getElementById("marketing-checkbox")?.checked,
+        });
+        initialBlockingEnabled = false;
+        unblockScripts();
+        headObserver.disconnect();
+
+
+        if (consentBanner) {
+            consentBanner.style.display = "none";
+        }
+    });
+}
+
+if (toggleConsentButton) {
+    toggleConsentButton.addEventListener("click", function () {
+        if (consentBanner) {
+            consentBanner.style.display = "block";
+        }
+    });
+}
+});
+
+window.updateConsentState = updateConsentState;
+})();
+`;
+
+(() => {
+  var __defProp = Object.defineProperty;
+  var __name = (target, value) =>
+    __defProp(target, "name", { value, configurable: true });
+
+  addEventListener("fetch", (event) => {
+    event.respondWith(handleRequest(event.request));
+  });
+
+  // CORS headers configuration
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-Request-Token",
+    "Access-Control-Max-Age": "86400",
+  };
+
+  async function handleRequest(request) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    console.log("Received request:", request.method, path);
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, { headers: corsHeaders });
+    }
+
+    if (path === "/request-token") {
+      const token = await generateToken();
+      return new Response(JSON.stringify({ token }), {
+        headers: { 
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store, private",
+          ...corsHeaders 
+        },
+      });
+    }
+
+    if (path === "/cmp-script") {
+      let token = url.searchParams.get("token");
+      console.log("Received token for validation:", token);
+
+      if (!token) {
+        console.error("Token is missing");
+        return new Response("Missing token", { status: 400, headers: corsHeaders });
+      }
+
+      const isValid = await validateToken(token);
+      if (!isValid) {
+        console.error("Invalid token:", token);
+        return new Response("Invalid token", { status: 403, headers: corsHeaders });
+      }
+
+      try {
+        // Generate a random key for AES-GCM
+        const keyMaterial = crypto.getRandomValues(new Uint8Array(32));
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+
+        // Import the key
+        const key = await crypto.subtle.importKey(
+          'raw',
+          keyMaterial,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['encrypt']
+        );
+
+        // Encrypt the script
+        const encoder = new TextEncoder();
+        const encodedScript = encoder.encode(CMP_SCRIPT);
+        
+        const encryptedData = await crypto.subtle.encrypt(
+          { name: 'AES-GCM', iv: iv },
+          key,
+          encodedScript
+        );
+
+        // Convert to base64
+        const encryptedBase64 = btoa(String.fromCharCode(...new Uint8Array(encryptedData)));
+        const keyBase64 = btoa(String.fromCharCode(...keyMaterial));
+        const ivBase64 = btoa(String.fromCharCode(...iv));
+
+        // Create wrapper script
+        const wrapperScript = `
+          (async () => {
+            try {
+              const keyMaterial = Uint8Array.from(atob('${keyBase64}'), c => c.charCodeAt(0));
+              const iv = Uint8Array.from(atob('${ivBase64}'), c => c.charCodeAt(0));
+              const encryptedData = Uint8Array.from(atob('${encryptedBase64}'), c => c.charCodeAt(0));
+
+              const key = await crypto.subtle.importKey(
+                'raw',
+                keyMaterial,
+                { name: 'AES-GCM', length: 256 },
+                false,
+                ['decrypt']
+              );
+
+              const decrypted = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv },
+                key,
+                encryptedData
+              );
+
+              const script = new TextDecoder().decode(decrypted);
+              const blob = new Blob([script], { type: 'application/javascript' });
+              const scriptUrl = URL.createObjectURL(blob);
+              
+              const scriptElement = document.createElement('script');
+              scriptElement.src = scriptUrl;
+              document.head.appendChild(scriptElement);
+              
+              scriptElement.onload = () => URL.revokeObjectURL(scriptUrl);
+            } catch (error) {
+              console.error('Error loading CMP script:', error);
+            }
+          })();
+        `;
+
+        return new Response(wrapperScript, {
+          headers: {
+            "Content-Type": "application/javascript",
+            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            ...corsHeaders
+          },
+        });
+      } catch (error) {
+        console.error('Error encrypting script:', error);
+        return new Response('Error processing script', { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // ... rest of your existing endpoints ...
+    return new Response("CMP worker is running", { 
+      status: 200, 
+      headers: corsHeaders 
+    });
+  }
+
+  async function generateToken() {
+    const array = new Uint8Array(32);
+    crypto.getRandomValues(array);
+
+    const token = btoa(String.fromCharCode(...array))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+    const kvKey = `auth-token-${token}`;
+
+    try {
+      await CMP_STORAGE.put(kvKey, "valid", { expirationTtl: 300 });
+      return token;
+    } catch (error) {
+      console.error("Error storing token in KV:", error);
+      throw error;
+    }
+  }
+
+  async function validateToken(token) {
+    if (!token) return false;
+
+    token = decodeURIComponent(token);
+    const kvKey = `auth-token-${token}`;
+
+    try {
+      const storedToken = await CMP_STORAGE.get(kvKey);
+      
+      if (storedToken === "valid") {
+        // Delete token after use
+        await CMP_STORAGE.delete(kvKey);
+        return true;
+      }
+    } catch (error) {
+      console.error("Error validating token:", error);
+    }
+
+    return false;
+  }
+  
+  async function generateVisitorId(request) {
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown-ip";
+    const userAgent = request.headers.get("User-Agent") || "unknown-ua";
+    const data = `${ip}:${userAgent}`;
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(data));
+
+    // Ensure proper Base64 encoding
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashBase64 = btoa(String.fromCharCode(...hashArray));
+
+    return hashBase64.slice(0, 32);
+  }
+
+  function getCookie(request, name) {
+    const cookieHeader = request.headers.get("Cookie");
+    if (!cookieHeader) return null;
+    const cookies = Object.fromEntries(
+      cookieHeader.split("; ").map((c) => c.split("="))
+    );
+    return cookies[name] || null;
+  }
+
+  async function handleConsentRequest(request, corsHeaders) {
+    const headers = new Headers(corsHeaders);
+    headers.append("Content-Type", "application/json");
+
+    try {
+      if (request.method === "POST") {
+        console.log("Received POST request to /consent");
+        const data = await request.json();
+        console.log("Raw request body:", data);
+        const { clientId, visitorId, preferences, policyVersion } = data;
+
+        if (!clientId || !visitorId || !preferences) {
+          return new Response(JSON.stringify({ error: "Missing required fields" }), {
+            status: 400,
+            headers,
+          });
+        }
+
+        // Decrypt visitorId
+        const decryptedVisitorId = await decryptData(
+          visitorId.encryptedData,
+          await importKey(Uint8Array.from(visitorId.key)),
+          Uint8Array.from(visitorId.iv)
+        );
+        console.log(" Decrypted visitorId:", decryptedVisitorId);
+
+        // Decrypt preferences
+        const decryptedPreferences = JSON.parse(await decryptData(
+          preferences.encryptedData,
+          await importKey(Uint8Array.from(preferences.key)),
+          Uint8Array.from(preferences.iv)
+        ));
+
+        // Ensure all categories exist with defaults
+        const consentData = {
+          visitorId: decryptedVisitorId,
+          necessary: true, // Always true
+          preferences: decryptedPreferences.preferences || false,
+          analytics: decryptedPreferences.analytics || false,
+          marketing: decryptedPreferences.marketing || false,
+          policyVersion: policyVersion || "1.0",
+          timestamp: new Date().toISOString(),
+        };
+
+        const kvKey = `${clientId}:${decryptedVisitorId}`;
+        console.log("KV key to store:", kvKey);
+
+        try {
+          await CMP_STORAGE.put(kvKey, JSON.stringify(consentData));
+          console.log(`Successfully stored consent data for ${kvKey}`);
+        } catch (error) {
+          console.error(`KV storage error for ${kvKey}:`, error);
+          return new Response("Error storing consent data", { status: 500, headers });
+        }
+
+        headers.append(
+          "Set-Cookie",
+          `visitor-id=${decryptedVisitorId}; Path=/; HttpOnly; Secure; SameSite=Lax`
+        );
+        headers.append(
+          "Set-Cookie",
+          `consent-preferences=${encodeURIComponent(JSON.stringify(consentData))}; Path=/; Max-Age=31536000; Secure; SameSite=Strict`
+        );
+
+        return new Response(JSON.stringify({ message: "Preferences saved", consentData }), {
+          status: 200,
+          headers,
+        });
+      }
+
+      return new Response(JSON.stringify({ error: "Method not allowed" }), {
+        status: 405,
+        headers,
+      });
+    } catch (error) {
+      console.error("Error processing consent:", error);
+      return new Response("Error processing consent", { status: 500, headers });
+    }
+  }
+
+  async function handleAuthorizationRequest() {
+    const clientId = "804657f91fb6efa7c9f530cea7434122bed8854be8d5574cd2c7b827add97406";
+    const redirectUri = "https://app.consentbit.com/callback";
+    const authUrl = `https://webflow.com/oauth/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}`;
+    return Response.redirect(authUrl, 302);
+  }
+
+  async function exchangeCodeForToken(code) {
+    const clientId = "804657f91fb6efa7c9f530cea7434122bed8854be8d5574cd2c7b827add97406";
+    const clientSecret = "922728538ac15a7b4c8753f955fcd61b261d126f37bad00dbdb5f6220a59cd0b";
+    const redirectUri = "https://app.consentbit.com/callback";
+
+    const response = await fetch("https://api.webflow.com/oauth/access_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: "authorization_code",
+        code: code,
+        redirect_uri: redirectUri,
+      }),
+    });
+
+    return response.json();
+  }
+
+  // Encryption & decryption functions
+  async function importKey(rawKey) {
+    return await crypto.subtle.importKey(
+      "raw",
+      rawKey,
+      { name: "AES-GCM" },
+      true,
+      ["encrypt", "decrypt"]
+    );
+  }
+
+  async function decryptData(encrypted, key, iv) {
+    console.log("Attempting decryption...");
+    const encryptedBuffer = Uint8Array.from(atob(encrypted), (c) =>
+      c.charCodeAt(0)
+    );
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: iv },
+      key,
+      encryptedBuffer
+    );
+    return new TextDecoder().decode(decrypted);
+  }
+
+
+  __name(handleRequest, "handleRequest");
+  __name(handleConsentRequest, "handleConsentRequest");
+  // Name assignments
+  __name(handleRequest, "handleRequest");
+  __name(generateToken, "generateToken");
+  __name(validateToken, "validateToken");
+})();
+
+
+
+this  is the code in worker now this is my webflow head code <script>
+(async () => {
+  const CONFIG = {
+    maxRetries: 5,
+    baseUrl: 'https://app.consentbit.com',
+    retryDelay: 2000,
+    scriptTimeout: 5000
+  };
+
+  class ScriptLoader {
+    static async fetchWithTimeout(url, options = {}, timeout = 5000) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
+      try {
+        const response = await fetch(url, {
+          ...options,
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return response;
+      } catch (error) {
+        clearTimeout(timeoutId);
+        throw error;
+      }
+    }
+
+    static async getToken() {
+      try {
+        const response = await this.fetchWithTimeout(
+          `${CONFIG.baseUrl}/request-token`,
+          {
+            method: 'GET',
+            credentials: 'omit',
+            cache: 'no-store'
+          }
+        );
+        
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const data = await response.json();
+        return data.token;
+      } catch (error) {
+        console.error("Token fetch error:", error);
+        return null;
+      }
+    }
+
+    static loadScript(token) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        const timestamp = Date.now();
+        script.src = `${CONFIG.baseUrl}/cmp-script?token=${encodeURIComponent(token)}&_=${timestamp}`;
+        script.async = true;
+        
+        const timeoutId = setTimeout(() => {
+          script.remove();
+          reject(new Error('Script load timeout'));
+        }, CONFIG.scriptTimeout);
+
+        script.onload = () => {
+          clearTimeout(timeoutId);
+          resolve(true);
+        };
+
+        script.onerror = () => {
+          clearTimeout(timeoutId);
+          script.remove();
+          reject(new Error('Script load failed'));
+        };
+
+        document.head.appendChild(script);
+      });
+    }
+
+    static async initialize() {
+      let attempt = 0;
+      let delay = CONFIG.retryDelay;
+
+      while (attempt < CONFIG.maxRetries) {
+        try {
+          attempt++;
+          const token = await this.getToken();
+          if (!token) throw new Error('Invalid token');
+
+          await this.loadScript(token);
+          console.log('CMP script loaded successfully');
+          return true;
+
+        } catch (error) {
+          console.warn(`Attempt ${attempt}/${CONFIG.maxRetries} failed:`, error);
+          
+          if (attempt === CONFIG.maxRetries) {
+            console.error('CMP script loading failed after all retries');
+            return false;
+          }
+
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay *= 1.5; // Exponential backoff
+        }
+      }
+      return false;
+    }
+  }
+
+  try {
+    await ScriptLoader.initialize();
+  } catch (error) {
+    console.error('Fatal error in CMP initialization:', error);
+  }
+})();
+</script>
