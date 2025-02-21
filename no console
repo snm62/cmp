@@ -1114,7 +1114,23 @@ function initializeAll() {
   __name(generateToken, "generateToken");
   __name(validateToken, "validateToken");
 })();
-  webflow head 
+ 
+webflow head 
+
+<style>
+#consent-banner {
+    display: none !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+}
+
+#consent-banner.show-banner {
+    display: block !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+</style>
+
 
 
 <script>
