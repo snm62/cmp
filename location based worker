@@ -1,0 +1,552 @@
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Accept"
+};
+
+// Banner templates for different regions
+const BANNER_TEMPLATES = {
+  GDPR: {
+    type: 'gdpr',
+    title: 'Privacy Notice for European Users',
+    content: `
+      <div class="consent-banner gdpr-banner">
+        <div class="banner-wrapper">
+          <div class="banner-header">
+            <h2>🔐 Privacy Preferences</h2>
+            <button class="close-btn" onclick="closeBanner()">×</button>
+          </div>
+          <div class="banner-content">
+            <p class="banner-description">We value your privacy. This website uses cookies and similar technologies to personalize content, analyze traffic, and protect your online experience.</p>
+            
+            <div class="cookie-settings">
+              <div class="cookie-group">
+                <div class="cookie-header">
+                  <input type="checkbox" id="essential" checked disabled>
+                  <label for="essential">Essential Cookies</label>
+                  <span class="required-badge">Required</span>
+                </div>
+                <p class="cookie-description">Necessary for the website to function properly. Cannot be disabled.</p>
+              </div>
+
+              <div class="cookie-group">
+                <div class="cookie-header">
+                  <input type="checkbox" id="analytics" checked>
+                  <label for="analytics">Analytics Cookies</label>
+                </div>
+                <p class="cookie-description">Help us understand how visitors interact with our website.</p>
+              </div>
+
+              <div class="cookie-group">
+                <div class="cookie-header">
+                  <input type="checkbox" id="marketing" checked>
+                  <label for="marketing">Marketing Cookies</label>
+                </div>
+                <p class="cookie-description">Used to deliver personalized advertisements.</p>
+              </div>
+            </div>
+          </div>
+          <div class="banner-footer">
+            <button class="reject-all-btn" onclick="rejectAll()">Reject All</button>
+            <div class="right-buttons">
+              <button class="save-preferences-btn" onclick="savePreferences()">Save Preferences</button>
+              <button class="accept-all-btn" onclick="acceptAll()">Accept All</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `,
+    styles: `
+      .consent-banner {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 90%;
+        max-width: 500px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+        font-family: Arial, sans-serif;
+        z-index: 9999;
+      }
+      .banner-wrapper {
+        padding: 24px;
+      }
+      .gdpr-banner .banner-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+      .gdpr-banner .banner-header h2 {
+        margin: 0;
+        font-size: 20px;
+        color: #1a1a1a;
+      }
+      .gdpr-banner .close-btn {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #666;
+      }
+      .gdpr-banner .banner-description {
+        color: #4a4a4a;
+        line-height: 1.5;
+        margin-bottom: 20px;
+      }
+      .gdpr-banner .cookie-settings {
+        background: #f8f8f8;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 20px;
+      }
+      .gdpr-banner .cookie-group {
+        margin-bottom: 16px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid #eee;
+      }
+      .gdpr-banner .cookie-group:last-child {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: none;
+      }
+      .gdpr-banner .cookie-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .gdpr-banner .cookie-header label {
+        margin-left: 8px;
+        font-weight: bold;
+        color: #333;
+      }
+      .gdpr-banner .required-badge {
+        background: #e9ecef;
+        color: #666;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+        margin-left: 8px;
+      }
+      .gdpr-banner .cookie-description {
+        color: #666;
+        font-size: 13px;
+        margin: 0 0 0 24px;
+      }
+      .gdpr-banner .banner-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }
+      .gdpr-banner .right-buttons {
+        display: flex;
+        gap: 10px;
+      }
+      .gdpr-banner button {
+        padding: 10px 20px;
+        border-radius: 6px;
+        cursor: pointer;
+        border: none;
+        font-weight: 500;
+        transition: opacity 0.2s;
+      }
+      .gdpr-banner button:hover {
+        opacity: 0.9;
+      }
+      .gdpr-banner .accept-all-btn {
+        background: #4CAF50;
+        color: white;
+      }
+      .gdpr-banner .save-preferences-btn {
+        background: #2196F3;
+        color: white;
+      }
+      .gdpr-banner .reject-all-btn {
+        background: none;
+        border: 1px solid #dc3545;
+        color: #dc3545;
+      }
+      @media (max-width: 480px) {
+        .consent-banner {
+          bottom: 0;
+          width: 100%;
+          max-width: none;
+          border-radius: 12px 12px 0 0;
+        }
+        .banner-wrapper {
+          padding: 16px;
+        }
+        .gdpr-banner .banner-footer {
+          flex-direction: column;
+        }
+        .gdpr-banner .right-buttons {
+          width: 100%;
+        }
+        .gdpr-banner button {
+          width: 100%;
+        }
+      }
+    `
+  },
+  CCPA: {
+    type: 'ccpa',
+    title: 'California Privacy Notice',
+    content: `
+      <div class="consent-banner ccpa-banner">
+        <div class="banner-wrapper">
+          <div class="banner-header">
+            <h2>🔒 California Privacy Rights</h2>
+            <button class="close-btn" onclick="closeBanner()">×</button>
+          </div>
+          <div class="banner-content">
+            <p class="banner-description">As a California resident, you have specific rights regarding your personal information:</p>
+            
+            <div class="rights-list">
+              <div class="right-item">
+                <span class="right-icon">📱</span>
+                <div class="right-details">
+                  <h3>Right to Know</h3>
+                  <p>You can request information about the personal data we collect and how we use it.</p>
+                </div>
+              </div>
+              <div class="right-item">
+                <span class="right-icon">🚫</span>
+                <div class="right-details">
+                  <h3>Right to Delete</h3>
+                  <p>You can request deletion of your personal information.</p>
+                </div>
+              </div>
+              <div class="right-item">
+                <span class="right-icon">💰</span>
+                <div class="right-details">
+                  <h3>Right to Opt-Out</h3>
+                  <p>You can opt-out of the sale of your personal information.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="banner-footer">
+            <button class="do-not-sell-btn" onclick="doNotSell()">Do Not Sell My Info</button>
+            <button class="privacy-choices-btn" onclick="showPrivacyChoices()">Privacy Choices</button>
+            <button class="acknowledge-btn" onclick="acknowledgeCCPA()">Accept & Continue</button>
+          </div>
+        </div>
+      </div>
+    `,
+    styles: `
+      .ccpa-banner {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 90%;
+        max-width: 500px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+        font-family: Arial, sans-serif;
+        z-index: 9999;
+      }
+      .banner-wrapper {
+        padding: 24px;
+      }
+      .ccpa-banner .banner-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+      .ccpa-banner .banner-header h2 {
+        margin: 0;
+        font-size: 20px;
+        color: #1a1a1a;
+      }
+      .ccpa-banner .close-btn {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #666;
+      }
+      .ccpa-banner .banner-description {
+        color: #4a4a4a;
+        line-height: 1.5;
+        margin-bottom: 20px;
+      }
+      .ccpa-banner .rights-list {
+        background: #f8f8f8;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 20px;
+      }
+      .ccpa-banner .right-item {
+        display: flex;
+        align-items: flex-start;
+        margin-bottom: 16px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid #eee;
+      }
+      .ccpa-banner .right-item:last-child {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: none;
+      }
+      .ccpa-banner .right-icon {
+        font-size: 20px;
+        margin-right: 12px;
+        margin-top: 2px;
+      }
+      .ccpa-banner .right-details h3 {
+        margin: 0 0 4px 0;
+        font-size: 16px;
+        color: #333;
+      }
+      .ccpa-banner .right-details p {
+        margin: 0;
+        font-size: 14px;
+        color: #666;
+      }
+      .ccpa-banner .banner-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+      .ccpa-banner button {
+        padding: 10px 20px;
+        border-radius: 6px;
+        cursor: pointer;
+        border: none;
+        font-weight: 500;
+        transition: opacity 0.2s;
+      }
+      .ccpa-banner button:hover {
+        opacity: 0.9;
+      }
+      .ccpa-banner .do-not-sell-btn {
+        background: #dc3545;
+        color: white;
+      }
+      .ccpa-banner .privacy-choices-btn {
+        background: #6c757d;
+        color: white;
+      }
+      .ccpa-banner .acknowledge-btn {
+        background: #4CAF50;
+        color: white;
+      }
+      @media (max-width: 480px) {
+        .ccpa-banner {
+          bottom: 0;
+          width: 100%;
+          max-width: none;
+          border-radius: 12px 12px 0 0;
+        }
+        .banner-wrapper {
+          padding: 16px;
+        }
+        .ccpa-banner .banner-footer {
+          flex-direction: column;
+        }
+        .ccpa-banner button {
+          width: 100%;
+        }
+      }
+    `
+  },
+  DEFAULT: {
+    type: 'default',
+    title: 'Cookie Notice',
+    content: `
+      <div class="consent-banner default-banner">
+        <div class="banner-wrapper">
+          <div class="banner-header">
+            <h2>🍪 Cookie Notice</h2>
+            <button class="close-btn" onclick="closeBanner()">×</button>
+          </div>
+          <div class="banner-content">
+            <p class="banner-description">
+              We use cookies to enhance your browsing experience and analyze our traffic. 
+              By continuing to use our website, you consent to our use of cookies.
+            </p>
+          </div>
+          <div class="banner-footer">
+            <button class="learn-more-btn" onclick="learnMore()">Learn More</button>
+            <div class="action-buttons">
+              <button class="decline-btn" onclick="declineDefault()">Decline</button>
+              <button class="accept-btn" onclick="acceptDefault()">Accept</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `,
+    styles: `
+      .default-banner {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 90%;
+        max-width: 400px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+        font-family: Arial, sans-serif;
+        z-index: 9999;
+      }
+      .banner-wrapper {
+        padding: 20px;
+      }
+      .default-banner .banner-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+      }
+      .default-banner .banner-header h2 {
+        margin: 0;
+        font-size: 18px;
+        color: #1a1a1a;
+      }
+      .default-banner .close-btn {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #666;
+      }
+      .default-banner .banner-description {
+        color: #4a4a4a;
+        line-height: 1.5;
+        margin-bottom: 20px;
+      }
+      .default-banner .banner-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .default-banner .action-buttons {
+        display: flex;
+        gap: 10px;
+      }
+      .default-banner button {
+        padding: 8px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        border: none;
+        font-weight: 500;
+        transition: opacity 0.2s;
+      }
+      .default-banner button:hover {
+        opacity: 0.9;
+      }
+      .default-banner .learn-more-btn {
+        background: none;
+        border: 1px solid #6c757d;
+        color: #6c757d;
+      }
+      .default-banner .accept-btn {
+        background: #4CAF50;
+        color: white;
+      }
+      .default-banner .decline-btn {
+        background: #dc3545;
+        color: white;
+      }
+      @media (max-width: 480px) {
+        .default-banner {
+          bottom: 0;
+          width: 100%;
+          max-width: none;
+          border-radius: 12px 12px 0 0;
+        }
+        .banner-wrapper {
+          padding: 16px;
+        }
+        .default-banner .banner-footer {
+          flex-direction: column;
+          gap: 10px;
+        }
+        .default-banner .action-buttons {
+          width: 100%;
+        }
+        .default-banner button {
+          flex: 1;
+        }
+        .default-banner .learn-more-btn {
+          width: 100%;
+        }
+      }
+    `
+  }
+};
+
+export default {
+  async fetch(request, env, ctx) {
+    // Handle CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders
+      });
+    }
+
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    if (request.method === "POST" && path === "/location") {
+      try {
+        const data = await request.json();
+        const country = request.headers.get("CF-IPCountry") || "Unknown";
+        
+        // Determine region and get appropriate banner
+        let bannerTemplate;
+        if (["GB", "DE", "FR", "IT", "ES", "NL", "BE", "DK", "SE", "NO", "FI", "PT", "IE", "AT", "GR", "PL"].includes(country)) {
+          bannerTemplate = BANNER_TEMPLATES.GDPR;
+        } else if (["US", "CA"].includes(country)) {
+          bannerTemplate = BANNER_TEMPLATES.CCPA;
+        } else {
+          bannerTemplate = BANNER_TEMPLATES.DEFAULT;
+        }
+
+        return new Response(JSON.stringify({
+          message: "Location processed",
+          country: country,
+          coordinates: data,
+          banner: bannerTemplate
+        }), {
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders
+          }
+        });
+
+      } catch (error) {
+        return new Response(JSON.stringify({
+          error: "Failed to process location",
+          details: error.message
+        }), {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders
+          }
+        });
+      }
+    }
+
+    return new Response(JSON.stringify({
+      error: "Method not allowed or invalid path"
+    }), {
+      status: 405,
+      headers: {
+        "Content-Type": "application/json",
+        ...corsHeaders
+      }
+    });
+  }
+};
+
+
