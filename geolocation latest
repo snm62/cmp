@@ -1,0 +1,1596 @@
+export {
+  handleCORS,
+  handleConsentRequest,
+  detectLocation,
+  selectBannerTemplate,
+  validateToken,
+  generateToken,
+  importKey,
+  decryptData,
+  formatCookieOptions
+};
+
+// Then add the main export default
+export default {
+  async fetch(request, env, ctx) {
+    // Make KV namespace available globally within the worker
+    globalThis.CMP_MANUAL = env.CMP_MANUAL;
+   
+    try {
+      return await handleRequest(request);
+    } catch (error) {
+      console.error('Worker error:', error);
+      return new Response(JSON.stringify({
+        error: 'Internal server error',
+        details: error.message
+      }), {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          ...corsHeaders
+        }
+      });
+    }
+  }
+};
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Accept, X-Request-Token, Authorization",
+  "Access-Control-Allow-Credentials": "true",
+  "Access-Control-Max-Age": "86400",
+};
+const BANNER_TEMPLATES = {
+  GDPR: {
+    type: 'gdpr',
+    title: 'Privacy Notice for European Users',
+    content: `
+      <div class="consent-banner gdpr-banner">
+        <div class="banner-wrapper">
+          <div class="banner-header">
+            <h2>🔐 Privacy Settings</h2>
+            <button class="close-btn" onclick="closeBanner()">×</button>
+          </div>
+          <div class="banner-content">
+            <p class="banner-description">We use cookies and similar technologies to process your personal data. Help us customize your experience:</p>
+            
+            <div class="cookie-settings">
+              <div class="cookie-group">
+                <div class="cookie-header">
+                  <input type="checkbox" id="necessary-checkbox" checked disabled>
+                  <label for="necessary-checkbox">Essential</label>
+                  <span class="required-badge">Required</span>
+                </div>
+                <p class="cookie-description">Required for basic site functionality.</p>
+              </div>
+
+              <div class="cookie-group">
+                <div class="cookie-header">
+                  <input type="checkbox" id="analytics-checkbox">
+                  <label for="analytics-checkbox">Analytics</label>
+                </div>
+                <p class="cookie-description">Help us improve our website performance.</p>
+              </div>
+
+              <div class="cookie-group">
+                <div class="cookie-header">
+                  <input type="checkbox" id="marketing-checkbox">
+                  <label for="marketing-checkbox">Marketing</label>
+                </div>
+                <p class="cookie-description">Allow personalized recommendations.</p>
+              </div>
+
+              <div class="cookie-group">
+                <div class="cookie-header">
+                  <input type="checkbox" id="personalization-checkbox">
+                  <label for="personalization-checkbox">Personalization</label>
+                </div>
+                <p class="cookie-description">Enable custom website features.</p>
+              </div>
+            </div>
+          </div>
+          <div class="banner-footer">
+            <button class="reject-all-btn" onclick="rejectAll()">Reject All</button>
+            <div class="right-buttons">
+              <button class="save-preferences-btn" onclick="savePreferences()">Save Preferences</button>
+              <button class="accept-all-btn" onclick="acceptAll()">Accept All</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `,
+    styles: `
+      .consent-banner {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 90%;
+        max-width: 500px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        z-index: 9999;
+      }
+      .banner-wrapper {
+        padding: 24px;
+      }
+      .banner-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+      .banner-header h2 {
+        margin: 0;
+        font-size: 20px;
+        color: #1a1a1a;
+      }
+      .close-btn {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #666;
+        padding: 0;
+      }
+      .banner-description {
+        color: #4a4a4a;
+        line-height: 1.5;
+        margin-bottom: 20px;
+      }
+      .cookie-settings {
+        background: #f8f8f8;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 20px;
+      }
+      .cookie-group {
+        margin-bottom: 16px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid #eee;
+      }
+      .cookie-group:last-child {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: none;
+      }
+      .cookie-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .cookie-header label {
+        margin-left: 8px;
+        font-weight: 600;
+        color: #333;
+      }
+      .required-badge {
+        background: #e9ecef;
+        color: #666;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+        margin-left: 8px;
+      }
+      .cookie-description {
+        color: #666;
+        font-size: 13px;
+        margin: 0 0 0 24px;
+      }
+      .banner-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }
+      .right-buttons {
+        display: flex;
+        gap: 10px;
+      }
+      button {
+        padding: 10px 20px;
+        border-radius: 6px;
+        cursor: pointer;
+        border: none;
+        font-weight: 500;
+        transition: all 0.2s ease;
+      }
+      button:hover {
+        opacity: 0.9;
+      }
+      .accept-all-btn {
+        background: #4CAF50;
+        color: white;
+      }
+      .save-preferences-btn {
+        background: #2196F3;
+        color: white;
+      }
+      .reject-all-btn {
+        background: none;
+        border: 1px solid #dc3545;
+        color: #dc3545;
+      }
+      @media (max-width: 480px) {
+        .consent-banner {
+          bottom: 0;
+          width: 100%;
+          max-width: none;
+          border-radius: 12px 12px 0 0;
+        }
+        .banner-wrapper {
+          padding: 16px;
+        }
+        .banner-footer {
+          flex-direction: column;
+        }
+        .right-buttons {
+          width: 100%;
+        }
+        button {
+          width: 100%;
+        }
+      }
+    `
+  },
+  CCPA: {
+    type: 'ccpa',
+    title: 'California Privacy Notice',
+    content: `
+      <div class="consent-banner ccpa-banner">
+        <div class="banner-wrapper">
+          <div class="banner-header">
+            <h2>🔒 California Privacy Rights</h2>
+            <button class="close-btn" onclick="closeBanner()">×</button>
+          </div>
+          <div class="banner-content">
+            <p class="banner-description">As a California resident, you have the right to control how your personal information is used and shared.</p>
+            
+            <div class="privacy-settings">
+              <div class="privacy-group">
+                <div class="privacy-header">
+                  <input type="checkbox" id="do-not-sell-checkbox">
+                  <label for="do-not-sell-checkbox">Do Not Sell My Personal Information</label>
+                </div>
+                <p class="privacy-description">Opt out of the sale of your personal information to third parties.</p>
+              </div>
+
+              <div class="privacy-group">
+                <div class="privacy-header">
+                  <input type="checkbox" id="limit-use-checkbox">
+                  <label for="limit-use-checkbox">Limit Use of Sensitive Data</label>
+                </div>
+                <p class="privacy-description">Restrict how we use your sensitive personal information.</p>
+              </div>
+
+              <div class="privacy-group">
+                <div class="privacy-header">
+                  <input type="checkbox" id="do-not-share-checkbox">
+                  <label for="do-not-share-checkbox">Do Not Share My Personal Information</label>
+                </div>
+                <p class="privacy-description">Opt out of sharing your data for cross-context behavioral advertising.</p>
+              </div>
+            </div>
+
+            <div class="additional-rights">
+              <h3>Your Additional Rights:</h3>
+              <ul>
+                <li>Right to Know what personal information we collect and how we use it</li>
+                <li>Right to Delete your personal information</li>
+                <li>Right to Correct inaccurate personal information</li>
+                <li>Right to Data Portability</li>
+              </ul>
+            </div>
+          </div>
+          <div class="banner-footer">
+            <button class="privacy-choices-btn" onclick="showPrivacyChoices()">More Privacy Choices</button>
+            <div class="right-buttons">
+              <button class="save-preferences-btn" onclick="saveCCPAPreferences()">Save Preferences</button>
+              <button class="acknowledge-btn" onclick="acknowledgeCCPA()">Accept & Continue</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `,
+    styles: `
+      .consent-banner {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 90%;
+        max-width: 500px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        z-index: 9999;
+      }
+      .banner-wrapper {
+        padding: 24px;
+      }
+      .banner-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+      .banner-header h2 {
+        margin: 0;
+        font-size: 20px;
+        color: #1a1a1a;
+      }
+      .close-btn {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #666;
+        padding: 0;
+      }
+      .banner-description {
+        color: #4a4a4a;
+        line-height: 1.5;
+        margin-bottom: 20px;
+      }
+      .privacy-settings {
+        background: #f8f8f8;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 20px;
+      }
+      .privacy-group {
+        margin-bottom: 16px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid #eee;
+      }
+      .privacy-group:last-child {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: none;
+      }
+      .privacy-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .privacy-header label {
+        margin-left: 8px;
+        font-weight: 600;
+        color: #333;
+      }
+      .privacy-description {
+        color: #666;
+        font-size: 13px;
+        margin: 0 0 0 24px;
+      }
+      .additional-rights {
+        background: #fff8dc;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 20px;
+      }
+      .additional-rights h3 {
+        margin: 0 0 12px 0;
+        font-size: 16px;
+        color: #333;
+      }
+      .additional-rights ul {
+        margin: 0;
+        padding-left: 20px;
+      }
+      .additional-rights li {
+        color: #666;
+        font-size: 13px;
+        margin-bottom: 8px;
+      }
+      .banner-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }
+      .right-buttons {
+        display: flex;
+        gap: 10px;
+      }
+      button {
+        padding: 10px 20px;
+        border-radius: 6px;
+        cursor: pointer;
+        border: none;
+        font-weight: 500;
+        transition: all 0.2s ease;
+      }
+      button:hover {
+        opacity: 0.9;
+      }
+      .acknowledge-btn {
+        background: #4CAF50;
+        color: white;
+      }
+      .save-preferences-btn {
+        background: #2196F3;
+        color: white;
+      }
+      .privacy-choices-btn {
+        background: none;
+        border: 1px solid #6c757d;
+        color: #6c757d;
+      }
+      @media (max-width: 480px) {
+        .consent-banner {
+          bottom: 0;
+          width: 100%;
+          max-width: none;
+          border-radius: 12px 12px 0 0;
+        }
+        .banner-wrapper {
+          padding: 16px;
+        }
+        .banner-footer {
+          flex-direction: column;
+        }
+        .right-buttons {
+          width: 100%;
+        }
+        button {
+          width: 100%;
+        }
+      }
+    `
+  }
+};
+const CMP_SCRIPT = `
+(async function () {
+  let initialBlockingEnabled = true;
+  let isLoadingState = false;
+  let consentState = {};
+  let observer;
+  let isInitialized = false;
+  let headObserver;
+  let blockedScripts = [];  
+
+  // Move createPlaceholder up here, before it's used
+  function createPlaceholder(script) {
+      const placeholder = document.createElement('script');
+      placeholder.type = 'text/placeholder';
+      placeholder.dataset.src = script.src;
+      placeholder.dataset.async = script.async || false;
+      placeholder.dataset.defer = script.defer || false;
+      placeholder.dataset.type = script.type || 'text/javascript';
+      placeholder.dataset.crossorigin = script.crossOrigin || '';
+      return placeholder;
+  }
+   
+  function isSuspiciousResource(url) {
+    if (!url || typeof url !== 'string') {
+        return false;
+    }
+  const suspiciousPatterns = [
+    // Analytics and Tracking
+    /gtag|analytics|googletagmanager|googleanalytics/,
+    /metrics|pageview|stat|trackpageview|track|collect/,
+    
+    // Social Media and Ads
+    /connect\.facebook\.net|fbevents\.js|facebook|meta|graph\.facebook\.com/,
+    /business\.facebook\.com|pixel|doubleclick|adservice|adwords|adsense/,
+    /linkedin|twitter|pinterest|tiktok|snap|reddit|quora/,
+    
+    // Marketing and CRM
+    /hubspot|marketo|pardot|salesforce|mailchimp|constantcontact|sendgrid/,
+    /klaviyo|braze|iterable|eloqua|act-on|zoho/,
+    
+    // Analytics and Monitoring
+    /clarity\.ms|hotjar|mouseflow|fullstory|logrocket|mixpanel|segment/,
+    /amplitude|heap|kissmetrics|matomo|piwik|plausible|woopra/,
+    /chartbeat|parse\.ly|newrelic|datadog|sentry|rollbar|bugsnag/,
+    
+    // Chat and Support
+    /intercom|drift|zendesk|freshchat|tawk|livechat|olark|purechat/,
+    /snapengage|liveperson|boldchat|clickdesk|userlike|zopim|crisp/,
+    
+    // Advertising and Marketing
+    /outbrain|taboola|sharethrough|moat|integral-marketing/,
+    /comscore|nielsen|quantcast|adobe|quantserve|scorecardresearch/,
+    
+    // Mobile and Attribution
+    /appsflyer|adjust|branch|kochava|singular|tune|attribution/,
+    
+    // Monitoring and Performance
+    /raygun|loggly|splunk|elastic|dynatrace|appoptics|pingdom/,
+    /uptimerobot|statuscake|datadoghq|sentry\.io|rollbar\.com/,
+    /bugsnag\.com|raygun\.io|loggly\.com|splunk\.com|elastic\.co/,
+    /dynatrace\.com|appoptics\.com|pingdom\.com|uptimerobot\.com/,
+    /statuscake\.com|clarity|clickagy|yandex|baidu/
+  ];
+  
+  // Test URL against all patterns
+  return suspiciousPatterns.some(pattern => pattern.test(url.toLowerCase()));
+  }
+
+  function blockDynamicScripts() {
+    if (observer) observer.disconnect();
+    observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            mutation.addedNodes.forEach((node) => {
+                if (node.tagName === "SCRIPT" && !consentState.analytics && isSuspiciousResource(node.src)) {
+                    
+                    node.remove();
+                }
+                if (node.tagName === "IFRAME" && !consentState.analytics && isSuspiciousResource(node.src)) {
+                    
+                    node.remove();
+                }
+                // Block dynamically added images (for tracking pixels)
+                if (node.tagName === "IMG" && !consentState.analytics && isSuspiciousResource(node.src)) {
+                    
+                    node.remove();
+                }
+            });
+        });
+    });
+  
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+  
+  function initializeObservers() {
+    // Initialize head observer
+    headObserver = new MutationObserver(mutations => {
+        mutations.forEach(mutation => {
+            mutation.addedNodes.forEach(node => {
+                if (node.tagName === 'SCRIPT' && isSuspiciousResource(node.src)) {
+                    node.remove(); // Remove the script before it runs
+                }
+            });
+        });
+    });
+
+    headObserver.observe(document.head, { childList: true });
+    
+    // Initialize body observer
+    if (observer) observer.disconnect();
+    observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            mutation.addedNodes.forEach((node) => {
+                if (node.tagName === "SCRIPT" && !consentState.analytics && isSuspiciousResource(node.src)) {
+                    node.remove();
+                }
+                if (node.tagName === "IFRAME" && !consentState.analytics && isSuspiciousResource(node.src)) {
+                    node.remove();
+                }
+                if (node.tagName === "IMG" && !consentState.analytics && isSuspiciousResource(node.src)) {
+                    node.remove();
+                }
+            });
+        });
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+}
+
+function scanAndBlockScripts() {
+
+  const scripts = document.querySelectorAll("script[src]");
+  const inlineScripts = document.querySelectorAll("script:not([src])");
+  
+  // Handle external scripts
+  scripts.forEach(script => {
+      if (isSuspiciousResource(script.src)) {
+        
+          const placeholder = createPlaceholder(script);
+          script.parentNode.replaceChild(placeholder, script);
+          blockedScripts.push(placeholder);
+      }
+  });
+
+  // Handle inline scripts
+  inlineScripts.forEach(script => {
+      const content = script.textContent;
+      if (content.match(/gtag|ga|fbq|twq|pintrk|snaptr|_qevents|dataLayer/)) {
+          
+          script.remove();
+      }
+  });
+}
+  
+async function loadConsentState() {
+  if (isLoadingState) {
+    return Promise.resolve();
+    
+ }
+    isLoadingState = true;
+
+    blockAllInitialRequests();
+    blockAllScripts();
+    
+    const consentGiven = localStorage.getItem("consent-given");
+    
+    
+    initialBlockingEnabled = !consentState.analytics;
+    
+    // Always scan and block on initial load
+    blockAllScripts();
+    
+    // If analytics are accepted, unblock after initial scan
+    if (!initialBlockingEnabled) {
+        unblockScripts();
+    }
+    isLoadingState = false;
+}
+function blockAllScripts() {
+    
+    blockMetaFunctions();
+    blockAnalyticsRequests();
+    scanAndBlockScripts();
+    blockDynamicScripts();
+    createPlaceholderScripts();
+    if (!consentState.marketing) {
+      blockMarketingScripts();
+  }
+  if (!consentState.personalization) {
+      blockPersonalizationScripts();
+  }
+  if (!consentState.analytics) {
+      blockAnalyticsScripts();
+  }
+}
+function blockMarketingScripts() {
+  const marketingPatterns = /facebook|meta|fbevents|linkedin|twitter|pinterest|tiktok|snap|reddit|quora|outbrain|taboola|sharethrough|moat|integral-marketing|hubspot|marketo|pardot|salesforce|mailchimp|constantcontact|sendgrid|klaviyo|braze|iterable/;
+  
+  // Block marketing scripts
+  const scripts = document.querySelectorAll("script[src]");
+  scripts.forEach(script => {
+      if (marketingPatterns.test(script.src)) {
+          const placeholder = createPlaceholder(script);
+          script.parentNode.replaceChild(placeholder, script);
+          blockedScripts.push(placeholder);
+      }
+  });
+}
+
+function blockPersonalizationScripts() {
+  const personalizationPatterns = /optimizely|segment|amplitude|heap|kissmetrics|mixpanel|fullstory|hotjar|mouseflow|crazyegg|clicktale|userlike|intercom|drift|zendesk|freshchat|tawk|livechat|olark|purechat|snapengage|liveperson|boldchat|clickdesk|crisp/;
+  
+  // Block personalization scripts
+  const scripts = document.querySelectorAll("script[src]");
+  scripts.forEach(script => {
+      if (personalizationPatterns.test(script.src)) {
+          const placeholder = createPlaceholder(script);
+          script.parentNode.replaceChild(placeholder, script);
+          blockedScripts.push(placeholder);
+      }
+  });
+}
+
+function blockAnalyticsScripts() {
+  const analyticsPatterns = /gtag|analytics|googletagmanager|googleanalytics|metrics|pageview|stat|trackpageview|clarity|matomo|piwik|plausible|woopra|chartbeat|parse\.ly|newrelic|datadog|sentry/;
+  
+  // Block analytics scripts
+  const scripts = document.querySelectorAll("script[src]");
+  scripts.forEach(script => {
+      if (analyticsPatterns.test(script.src)) {
+          const placeholder = createPlaceholder(script);
+          script.parentNode.replaceChild(placeholder, script);
+          blockedScripts.push(placeholder);
+      }
+  });
+}
+
+function unblockScripts() {
+  blockedScripts.forEach(placeholder => {
+      if (placeholder.dataset.src) {
+          const script = document.createElement('script');
+          script.src = placeholder.dataset.src;
+        
+          const shouldUnblock = (
+            (consentState.marketing && /facebook|meta|fbevents/.test(script.src)) ||
+            (consentState.personalization && /optimizely|hotjar|mouseflow/.test(script.src)) ||
+            (consentState.analytics && /gtag|analytics|googletagmanager/.test(script.src))
+          );
+          
+          if (shouldUnblock) {
+              script.async = placeholder.dataset.async === 'true';
+              script.defer = placeholder.dataset.defer === 'true';
+              script.type = placeholder.dataset.type;
+              if (placeholder.dataset.crossorigin) {
+                  script.crossOrigin = placeholder.dataset.crossorigin;
+              }
+              
+              // Add load event listener
+              script.onload = () => {
+                  if (script.src.includes('fbevents.js')) {
+                      initializeFbq();
+                  }
+              };
+              
+              placeholder.parentNode.replaceChild(script, placeholder);
+          }
+      }
+  });
+  
+  blockedScripts.length = 0;
+
+  if (consentState.analytics) {
+      if (observer) observer.disconnect();
+      if (headObserver) headObserver.disconnect();
+  } else {
+      blockDynamicScripts();
+  }
+  
+  // Restore original functions
+  if (window.fbqBlocked) {
+      delete window.fbqBlocked;
+      loadScript("https://connect.facebook.net/en_US/fbevents.js", initializeFbq);
+  }
+}
+
+
+// Add this new function to restore original functions
+function restoreOriginalFunctions() {
+    if (window.originalFetch) window.fetch = window.originalFetch;
+    if (window.originalXHR) window.XMLHttpRequest = window.originalXHR;
+    if (window.originalImage) window.Image = window.originalImage;
+    
+    if (window.fbqBlocked) {
+        delete window.fbqBlocked;
+        loadScript("https://connect.facebook.net/en_US/fbevents.js", initializeFbq);
+    }
+  }
+
+   function blockAnalyticsRequests() {
+  // Fetch Blocking (Improved)
+  const originalFetch = window.fetch;
+  window.fetch = function (...args) {
+      const url = args[0];
+      if (typeof url === "string" && !consentState.analytics && isSuspiciousResource(url)) {
+          
+          return Promise.resolve(new Response(null, { status: 204, statusText: 'No Content' })); // More robust empty response
+      }
+      return originalFetch.apply(this, args);
+  };
+
+ 
+  const originalXHR = window.XMLHttpRequest;
+  window.XMLHttpRequest = function() {
+    const xhr = new originalXHR();
+    const originalOpen = xhr.open;
+    
+    xhr.open = function(method, url) {
+      if (typeof url === "string" && !consentState.analytics && isSuspiciousResource(url)) {
+        
+        return;
+      }
+      return originalOpen.apply(xhr, arguments); // Use xhr instead of this
+    };
+    return xhr;
+  };
+}
+
+
+function blockMetaFunctions() {
+  if (!consentState.analytics) {
+    if (!window.fbqBlocked) {
+      window.fbqBlocked = window.fbq || function () {
+        
+        window.fbq.queue.push(arguments);
+      };
+      window.fbqBlocked.queue = [];
+      window.fbq = window.fbqBlocked;
+      
+    }
+  } else {
+    if (window.fbq === window.fbqBlocked) {
+      delete window.fbqBlocked;
+      delete window.fbq;
+      
+      // Direct load without delay
+      loadScript("https://connect.facebook.net/en_US/fbevents.js", initializeFbq);
+      
+    }
+  }
+}
+function initializeFbq() {
+  if (window.fbq && window.fbq.queue) {
+    window.fbq.queue.forEach(args => window.fbq.apply(null, args));
+  }
+  
+}
+
+
+function blockAllInitialRequests() {
+const originalFetch = window.fetch;
+window.fetch = function (...args) {
+    const url = args[0];
+    if (initialBlockingEnabled && isSuspiciousResource(url)) {
+        
+        return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    return originalFetch.apply(this, args);
+};
+
+const originalXHR = window.XMLHttpRequest;
+  window.XMLHttpRequest = function() {
+    const xhr = new originalXHR();
+    const originalOpen = xhr.open;
+    
+    xhr.open = function(method, url) {
+      if (initialBlockingEnabled && isSuspiciousResource(url)) {
+        
+        return;
+      }
+      return originalOpen.apply(xhr, arguments);
+    };
+    return xhr;
+  };
+
+const originalImage = window.Image;
+window.Image = function(...args) {
+    const img = new originalImage(...args);
+    img.setAttribute = function(name, value) {
+        if (name === 'src' && initialBlockingEnabled && isSuspiciousResource(value)) {
+            
+            return;
+        }
+        return originalSetAttribute.apply(this, arguments);
+    };
+    return img;
+};
+}   
+
+function getClientIdentifier() {
+return window.location.hostname; // Use hostname as the unique client identifier
+}
+
+  async function hashData(data) {
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(data);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", dataBuffer);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  async function generateKey() {
+    const key = await crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"]
+    );
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const exportedKey = await crypto.subtle.exportKey("raw", key);
+    return { secretKey: exportedKey, iv };
+  }
+
+
+  
+async function importKey(rawKey) {
+    return await crypto.subtle.importKey(
+        "raw",
+        rawKey,
+        { name: "AES-GCM" },
+        false,
+        ["decrypt"]
+    );
+}
+
+async function decryptData(encrypted, key, iv) {
+    const encryptedBuffer = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0));
+    const decrypted = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv },
+        key,
+        encryptedBuffer
+    );
+    return new TextDecoder().decode(decrypted);
+}
+
+  async function encryptData(data, key, iv) {
+    const encoder = new TextEncoder();
+    const encodedData = encoder.encode(data);
+    const importedKey = await crypto.subtle.importKey(
+      "raw",
+      key,
+      { name: "AES-GCM" },
+      false,
+      ["encrypt"]
+    );
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: iv },
+      importedKey,
+      encodedData
+    );
+    return btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+  }
+
+  function getCookie(name) {
+    const cookieString = document.cookie;
+    if (!cookieString) return null;
+    
+    const cookies = Object.fromEntries(
+        cookieString.split("; ").map(c => c.split("="))
+    );
+    
+    return cookies[name] || null;
+}
+
+  
+  try {
+      // Step 1: Request authentication token
+      const tokenResponse = await fetch("https://app.consentbit.com/cmp/request-token");
+      const tokenData = await tokenResponse.json();
+      const token = tokenData.token;
+      
+      if (!token) {
+          console.error("Failed to retrieve authentication token.");
+          return;
+      }
+      
+  } catch (error) {
+      console.error("Error sending consent data:", error);
+  }
+
+
+
+function revalidateBlockedScripts() {
+  if (!consentState.analytics) {
+      
+      scanAndBlockScripts();
+      blockDynamicScripts();
+  }
+}
+
+function updateConsentState(preferences) {
+  
+  consentState = preferences;
+  initialBlockingEnabled = !preferences.analytics;
+  
+  if (preferences.analytics) {
+      
+      unblockScripts();
+  } else {
+      
+      blockAllScripts();
+  }
+  
+  saveConsentState(preferences);
+}
+
+function loadScript(src, callback) {
+  const script = document.createElement("script");
+  script.src = src;
+  script.async = true;
+  script.onload = callback;
+  document.head.appendChild(script);
+  
+}
+
+function attachToWindow() {
+  // Core required functions - these must be attached first
+  window.loadConsentState = loadConsentState;
+  window.updateConsentState = updateConsentState;
+  window.initializeAll = initializeAll;
+  
+  // Log the attachment of core functions
+  console.log('Core CMP functions attached:', {
+      loadConsentState: typeof window.loadConsentState === 'function',
+      updateConsentState: typeof window.updateConsentState === 'function',
+      initializeAll: typeof window.initializeAll === 'function'
+  });
+
+  // Utility functions
+  window.blockMetaFunctions = blockMetaFunctions;
+  window.blockAllInitialRequests = blockAllInitialRequests;
+  window.blockAnalyticsRequests = blockAnalyticsRequests;
+  window.scanAndBlockScripts = scanAndBlockScripts;
+  window.blockDynamicScripts = blockDynamicScripts;
+  window.importKey = importKey;         
+  window.decryptData = decryptData;   
+  window.unblockScripts = unblockScripts;
+  window.restoreOriginalFunctions = restoreOriginalFunctions;
+}
+
+function initializeAll() {
+  if (isInitialized) {
+    
+    return;
+  }
+  
+  
+  // Block everything first
+  blockAllInitialRequests();
+  blockAllScripts();
+  
+  // Then load state and initialize banner
+  loadConsentState().then(() => {
+    
+    
+    isInitialized = true;
+  });
+ }
+    
+    // Set up periodic script checking
+    setInterval(revalidateBlockedScripts, 5000);
+})();
+`;
+
+// CORS handling function
+async function handleCORS(request) {
+  // Handle CORS preflight requests
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        ...corsHeaders,
+        // Use the actual origin if available, fallback to wildcard
+        "Access-Control-Allow-Origin": request.headers.get("Origin") || "*",
+      }
+    });
+  }
+  // For actual requests, validate origin
+  const origin = request.headers.get("Origin");
+  if (origin) {
+    // You can add origin validation logic here if needed
+    corsHeaders["Access-Control-Allow-Origin"] = origin;
+  }
+  return null; // Continue with request handling
+}
+async function detectLocation(request) {
+  try {
+    // Get location from CF headers
+    const country = request.headers.get('CF-IPCountry') || 'UNKNOWN';
+    const continent = request.headers.get('CF-IPContinent') || 'UNKNOWN';
+    // Get IP address
+    const ip = request.headers.get('CF-Connecting-IP') ||
+               request.headers.get('X-Real-IP') ||
+               'UNKNOWN';
+    // Get language preferences from Accept-Language header
+    const acceptLanguage = request.headers.get('Accept-Language') || '';
+    const preferredLanguages = acceptLanguage
+      .split(',')
+      .map(lang => lang.split(';')[0].trim().toLowerCase());
+    // Determine if in EU
+    const euCountries = new Set([
+      'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
+      'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL',
+      'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'
+    ]);
+    const isEU = euCountries.has(country);
+    // Get timezone if available
+    const timezone = request.headers.get('CF-Timezone') || 'UNKNOWN';
+    return {
+      country,
+      continent,
+      ip,
+      isEU,
+      timezone,
+      preferredLanguages,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('Location detection error:', error);
+    // Return default location data
+    return {
+      country: 'UNKNOWN',
+      continent: 'UNKNOWN',
+      ip: 'UNKNOWN',
+      isEU: false,
+      timezone: 'UNKNOWN',
+      preferredLanguages: [],
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+function selectBannerTemplate(locationData) {
+  try {
+    // Default to GDPR if something goes wrong
+    if (!locationData || !locationData.country) {
+      return 'GDPR';
+    }
+    // Define regions and their corresponding templates
+    const templateMap = {
+      GDPR: {
+        countries: [
+          'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
+          'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL',
+          'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'
+        ],
+        isDefault: false
+      },
+      CCPA: {
+        countries: ['US'],
+        states: ['CA', 'VA', 'CO', 'CT', 'UT'],
+        isDefault: false
+      },
+      LGPD: {
+        countries: ['BR'],
+        isDefault: false
+      },
+      BASIC: {
+        countries: ['*'],
+        isDefault: true
+      }
+    };
+    // Check if country is in EU (GDPR)
+    if (locationData.isEU || templateMap.GDPR.countries.includes(locationData.country)) {
+      return 'GDPR';
+    }
+    // Check for US/CCPA
+    if (locationData.country === 'US') {
+      // If we have state information, we could make this more specific
+      // For now, applying CCPA to all US traffic
+      return 'CCPA';
+    }
+    // Check for Brazil/LGPD
+    if (locationData.country === 'BR') {
+      return 'LGPD';
+    }
+    // Return basic template for all other locations
+    return 'BASIC';
+  } catch (error) {
+    console.error('Template selection error:', error);
+    return 'GDPR'; // Default to GDPR as the safest option
+  }
+}
+async function importKey(rawKey) {
+  return await crypto.subtle.importKey(
+    'raw',
+    rawKey,
+    { name: 'AES-GCM' },
+    false,
+    ['decrypt']
+  );
+}
+async function decryptData(encryptedData, key, iv) {
+  try {
+    const encryptedBytes = new Uint8Array(encryptedData);
+    const decrypted = await crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: iv
+      },
+      key,
+      encryptedBytes
+    );
+    
+    const decoder = new TextDecoder();
+    return decoder.decode(decrypted);
+  } catch (error) {
+    console.error('Decryption error:', error);
+    throw new Error('Failed to decrypt data');
+  }
+}
+async function handleConsentRequest(request, corsHeaders) {
+  const headers = new Headers(corsHeaders);
+  headers.append("Content-Type", "application/json");
+
+  try {
+      if (request.method === "POST") {
+          console.log("Received POST request to /consent");
+          const data = await request.json();
+          console.log("Raw encrypted request body:", data);
+
+          // Validate required fields
+          if (!data.visitorId || !data.preferences || !data.clientId) {
+              return new Response(JSON.stringify({ 
+                  error: "Missing required encryption data" 
+              }), {
+                  status: 400,
+                  headers
+              });
+          }
+
+          try {
+              // Decrypt visitor ID
+              const decryptedVisitorId = await decryptData(
+                  data.visitorId.encryptedData,
+                  await importKey(Uint8Array.from(data.visitorId.key)),
+                  Uint8Array.from(data.visitorId.iv)
+              );
+
+              // Decrypt preferences
+              const decryptedPreferences = await decryptData(
+                  data.preferences.encryptedData,
+                  await importKey(Uint8Array.from(data.preferences.key)),
+                  Uint8Array.from(data.preferences.iv)
+              );
+              const preferences = JSON.parse(decryptedPreferences);
+
+              // Validate decrypted data
+              if (!decryptedVisitorId || !preferences) {
+                  throw new Error("Invalid decrypted data");
+              }
+
+              // Create consent data object with decrypted values
+              const consentData = {
+                  clientId: data.clientId,
+                  visitorId: decryptedVisitorId,
+                  preferences: {
+                      necessary: preferences.necessary ?? true,
+                      marketing: preferences.marketing ?? false,
+                      personalization: preferences.personalization ?? false,
+                      analytics: preferences.analytics ?? false,
+                      gdpr: preferences.gdpr ?? false,
+                      timestamp: preferences.timestamp ?? new Date().toISOString()
+                  },
+                  metadata: {
+                      userAgent: request.headers.get("User-Agent") || "unknown",
+                      ip: request.headers.get("CF-Connecting-IP") || "unknown",
+                      country: request.headers.get("CF-IPCountry") || "unknown",
+                      timestamp: new Date().toISOString(),
+                      ...data.metadata
+                  },
+                  policyVersion: data.policyVersion || "1.0",
+                  lastUpdated: new Date().toISOString()
+              };
+
+              // Store in KV
+              const kvKey = `consent:${data.clientId}:${decryptedVisitorId}`;
+              console.log("Storing consent data with key:", kvKey);
+
+              try {
+                  await CMP_MANUAL.put(kvKey, JSON.stringify(consentData));
+              } catch (kvError) {
+                  console.error(`KV storage error for ${kvKey}:`, kvError);
+                  throw new Error("Failed to store consent data");
+              }
+
+              // Set secure cookies
+              const cookieOptions = {
+                  path: '/',
+                  secure: true,
+                  httpOnly: true,
+                  sameSite: 'Lax',
+                  maxAge: 31536000 // 1 year
+              };
+
+              // Visitor ID cookie (HttpOnly for security)
+              headers.append(
+                  "Set-Cookie",
+                  `visitor-id=${decryptedVisitorId}; ${formatCookieOptions({...cookieOptions, httpOnly: true})}`
+              );
+
+              // Preferences cookie (accessible by JavaScript)
+              headers.append(
+                  "Set-Cookie",
+                  `consent-preferences=${JSON.stringify({
+                      necessary: preferences.necessary,
+                      marketing: preferences.marketing,
+                      personalization: preferences.personalization,
+                      analytics: preferences.analytics
+                  })}; ${formatCookieOptions({...cookieOptions, httpOnly: false, sameSite: 'Strict'})}`
+              );
+
+              return new Response(JSON.stringify({ 
+                  message: "Consent data processed successfully",
+                  consentId: kvKey,
+                  timestamp: consentData.lastUpdated
+              }), {
+                  status: 200,
+                  headers
+              });
+          } catch (decryptionError) {
+              console.error("Decryption error:", decryptionError);
+              return new Response(JSON.stringify({ 
+                  error: "Failed to process encrypted data",
+                  details: decryptionError.message 
+              }), {
+                  status: 400,
+                  headers
+              });
+          }
+      }
+
+      return new Response(JSON.stringify({ error: "Method not allowed" }), {
+          status: 405,
+          headers
+      });
+  } catch (error) {
+      console.error("Error processing consent:", error);
+      return new Response(JSON.stringify({ 
+          error: "Internal server error",
+          details: error.message 
+      }), { 
+          status: 500, 
+          headers 
+      });
+  }
+}
+
+// Utility function to format cookie options
+function formatCookieOptions(options) {
+  const parts = [];
+  if (options.path) parts.push(`Path=${options.path}`);
+  if (options.maxAge) parts.push(`Max-Age=${options.maxAge}`);
+  if (options.secure) parts.push('Secure');
+  if (options.httpOnly) parts.push('HttpOnly');
+  if (options.sameSite) parts.push(`SameSite=${options.sameSite}`);
+  return parts.join('; ');
+}
+async function validateToken(token) {
+  try {
+    // Basic validation
+    if (!token || token.length < 10) {
+      console.log('Token validation failed: Invalid token format');
+      return false;
+    }
+
+    // Decode the token
+    const decodedToken = decodeURIComponent(token);
+    const kvKey = `auth-token-${decodedToken}`;
+
+    try {
+      // Check token in KV storage
+      const storedToken = await CMP_MANUAL.get(kvKey);
+      
+      if (storedToken === "valid") {
+        console.log('Token validated successfully');
+        
+        // Delete token after successful validation (one-time use)
+        try {
+          await CMP_MANUAL.delete(kvKey);
+          console.log('Token deleted after use');
+        } catch (deleteError) {
+          console.error('Error deleting used token:', deleteError);
+          // Continue execution even if deletion fails
+        }
+        
+        return true;
+      } else {
+        console.log('Token validation failed: Token not found or invalid');
+        return false;
+      }
+    } catch (kvError) {
+      console.error('KV storage error during token validation:', kvError);
+      return false;
+    }
+  } catch (error) {
+    console.error('Token validation error:', error);
+    return false;
+  }
+}
+async function generateToken() {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+
+  const token = btoa(String.fromCharCode(...array))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
+  const kvKey = `auth-token-${token}`;
+
+  try {
+    
+    await CMP_MANUAL.put(kvKey, "valid", { expirationTtl: 300 });
+    return token;
+  } catch (error) {
+    console.error("Error storing token in KV:", error);
+    throw error;
+  }
+}
+// Update main request handler
+async function handleRequest(request) {
+  // Handle CORS first
+  const corsResponse = await handleCORS(request);
+  if (corsResponse) return corsResponse;
+  const url = new URL(request.url);
+  const path = url.pathname;
+  // Location-based banner endpoint
+  if (path === "/cmp/location") {
+    try {
+      // Token validation
+      const token = request.headers.get('X-Request-Token');
+      if (!token || !(await validateToken(token))) {
+        return new Response(JSON.stringify({
+          error: "Unauthorized"
+        }), {
+          status: 401,
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders
+          }
+        });
+      }
+      const locationData = await detectLocation(request);
+      const bannerTemplate = selectBannerTemplate(locationData);
+      const clientData = await request.json().catch(() => ({}));
+      return new Response(JSON.stringify({
+        location: locationData,
+        banner: bannerTemplate,
+        clientData
+      }), {
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders
+        }
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({
+        error: "Failed to process location",
+        details: error.message
+      }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders
+        }
+      });
+    }
+  }
+  // Handle other endpoints...
+  if (path === "/cmp/consent") {
+    return await handleConsentRequest(request, corsHeaders);
+  }
+  if (path === "/cmp/request-token") {
+    const token = await generateToken();
+    return new Response(JSON.stringify({ token }), {
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store, private",
+        ...corsHeaders
+      },
+    });
+  }
+  if (path === "/cmp/cmp-script") {
+      let token = url.searchParams.get("token");
+      console.log("Received token for validation:", token);
+
+      if (!token) {
+        console.error("Token is missing");
+        return new Response("Missing token", { status: 400, headers: corsHeaders });
+      }
+
+      const isValid = await validateToken(token);
+      if (!isValid) {
+        console.error("Invalid token:", token);
+        return new Response("Invalid token", { status: 403, headers: corsHeaders });
+      }
+          
+      try {
+
+        // Generate a random key for AES-GCM
+        const keyMaterial = crypto.getRandomValues(new Uint8Array(32));
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+
+        // Import the key
+        const key = await crypto.subtle.importKey(
+          'raw',
+          keyMaterial,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['encrypt']
+        );
+
+        // Encrypt the script
+        const encoder = new TextEncoder();
+        const encodedScript = encoder.encode(CMP_SCRIPT);
+        
+        const encryptedData = await crypto.subtle.encrypt(
+          { name: 'AES-GCM', iv: iv },
+          key,
+          encodedScript
+        );
+
+        // Convert to base64
+        const encryptedBase64 = btoa(String.fromCharCode(...new Uint8Array(encryptedData)));
+        const keyBase64 = btoa(String.fromCharCode(...keyMaterial));
+        const ivBase64 = btoa(String.fromCharCode(...iv));
+
+
+
+        
+        // In your handleRequest function, modify the wrapperScript:
+
+        const wrapperScript = `
+        (async () => {
+            window.__CMP_STATE__ = window.__CMP_STATE__ || {
+                loading: false,
+                loaded: false,
+                initialized: false
+            };
+        
+            try {
+                window.__CMP_STATE__.loading = true;
+        
+                // Decrypt script
+                const keyMaterial = Uint8Array.from(atob('${keyBase64}'), c => c.charCodeAt(0));
+                const iv = Uint8Array.from(atob('${ivBase64}'), c => c.charCodeAt(0));
+                const encryptedData = Uint8Array.from(atob('${encryptedBase64}'), c => c.charCodeAt(0));
+        
+                const key = await crypto.subtle.importKey(
+                    'raw',
+                    keyMaterial,
+                    { name: 'AES-GCM', length: 256 },
+                    false,
+                    ['decrypt']
+                );
+        
+                const decrypted = await crypto.subtle.decrypt(
+                    { name: 'AES-GCM', iv },
+                    key,
+                    encryptedData
+                );
+        
+                const scriptContent = new TextDecoder().decode(decrypted);
+                
+                if (!scriptContent || scriptContent.trim() === '') {
+                    throw new Error('Decrypted script content is empty');
+                }
+        
+                // Execute script using a blob URL
+                const blob = new Blob([scriptContent], { type: 'text/javascript' });
+                const scriptUrl = URL.createObjectURL(blob);
+                const script = document.createElement('script');
+                script.src = scriptUrl;
+                script.onload = () => {
+                    URL.revokeObjectURL(scriptUrl);
+                    checkAndInitialize();
+                };
+                document.head.appendChild(script);
+        
+                // Function to check if CMP is ready - modified to check only required functions
+                const isCMPReady = () => {
+                    return typeof window.loadConsentState === 'function' && 
+                           typeof window.initializeAll === 'function' && 
+                           typeof window.updateConsentState === 'function';
+                };
+        
+                // Check for required functions
+                const maxRetries = 5;
+                let retryCount = 0;
+        
+                const checkAndInitialize = () => {
+                    if (isCMPReady()) {
+                        window.__CMP_STATE__.loaded = true;
+                        try {
+                            window.initializeAll();
+                            window.__CMP_STATE__.initialized = true;
+                        } catch (error) {
+                            console.error('CMP initialization error:', error);
+                        }
+                        return;
+                    }
+        
+                    if (retryCount < maxRetries) {
+                        retryCount++;
+                        requestAnimationFrame(checkAndInitialize);
+                    } else {
+                        console.error('CMP functions not found after maximum retries');
+                        window.__CMP_STATE__.loading = false;
+                    }
+                };
+        
+            } catch (error) {
+                console.error('CMP initialization error:', error);
+                window.__CMP_STATE__.loading = false;
+            }
+        })();
+        `;
+
+
+        return new Response(wrapperScript, {
+          headers: {
+            "Content-Type": "application/javascript",
+            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            ...corsHeaders
+          },
+        });
+      } catch (error) {
+        console.error('Error encrypting script:', error);
+        return new Response('Error processing script', { status: 500, headers: corsHeaders });
+      }
+    }
+
+  
+  // Default response for unmatched paths
+  return new Response("CMP worker is running", {
+    status: 200,
+    headers: corsHeaders
+  });
+}
+
+
+
