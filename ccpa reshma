@@ -1,0 +1,1312 @@
+
+
+
+const ANALYTICS_BLOCKER = `
+(function() {
+  console.log('Setting up analytics blocker...');
+  
+  // Initialize blocker state
+  window.__ANALYTICS_BLOCKER__ = {
+    enabled: true,
+    initialized: false
+  };
+
+  // Blocking patterns
+  const BLOCKED_PATTERNS = [
+    'google-analytics',
+    'gtag',
+    'googletagmanager',
+    'analytics',
+    'facebook.com',
+    'facebook.net',
+    'fb.com',
+    'doubleclick.net',
+    'hotjar',
+    'clarity.ms',
+    'mixpanel',
+    'heap',
+    'segment'
+  ];
+
+  // Store original functions
+  const originalFetch = window.fetch;
+  const originalXHR = window.XMLHttpRequest;
+  const originalCreateElement = document.createElement;
+
+  // Helper function
+  function shouldBlock(url) {
+    return BLOCKED_PATTERNS.some(pattern => url.toLowerCase().includes(pattern));
+  }
+
+  // Override fetch
+  window.fetch = function(...args) {
+    const url = args[0] instanceof Request ? args[0].url : args[0];
+    if (shouldBlock(url)) {
+      console.log('[Blocked] fetch:', url);
+      return Promise.resolve(new Response());
+    }
+    return originalFetch.apply(this, args);
+  };
+
+  // Override XHR
+  window.XMLHttpRequest = function() {
+    const xhr = new originalXHR();
+    const originalOpen = xhr.open;
+    xhr.open = function(...args) {
+      if (shouldBlock(args[1])) {
+        console.log('[Blocked] XHR:', args[1]);
+        return;
+      }
+      return originalOpen.apply(xhr, args);
+    };
+    return xhr;
+  };
+
+  // Override createElement for script tags
+  document.createElement = function(tagName) {
+    const element = originalCreateElement.call(document, tagName);
+    if (tagName.toLowerCase() === 'script') {
+      const originalSetAttribute = element.setAttribute;
+      element.setAttribute = function(name, value) {
+        if (name === 'src' && shouldBlock(value)) {
+          console.log('[Blocked] script:', value);
+          return;
+        }
+        return originalSetAttribute.call(this, name, value);
+      };
+    }
+    return element;
+  };
+
+  // Create blocked function wrapper
+  function createBlockedFunction(name) {
+    return function() {
+      console.log('[Blocked] function call:', name);
+      return undefined;
+    };
+  }
+
+  // Define analytics functions to block
+  const analyticsFunctions = {
+    ga: createBlockedFunction('ga'),
+    gtag: createBlockedFunction('gtag'),
+    fbq: createBlockedFunction('fbq'),
+    _fbq: createBlockedFunction('_fbq'),
+    mixpanel: createBlockedFunction('mixpanel'),
+    heap: createBlockedFunction('heap'),
+    rdt: createBlockedFunction('rdt'),
+    dataLayer: [],
+    _gaq: []
+  };
+
+  // Safely assign analytics functions
+  Object.keys(analyticsFunctions).forEach(key => {
+    try {
+      if (!window[key]) {
+        window[key] = analyticsFunctions[key];
+        console.log('[Blocked] Initialized:', key);
+      }
+    } catch (error) {
+      console.log('[Blocked] Could not block:', key, error);
+    }
+  });
+
+  // Block dataLayer push
+  window.dataLayer = window.dataLayer || [];
+  const originalPush = Array.prototype.push;
+  window.dataLayer.push = function() {
+    console.log('[Blocked] dataLayer.push:', arguments);
+    return originalPush.apply(this, arguments);
+  };
+
+  window.__ANALYTICS_BLOCKER__.initialized = true;
+  console.log('Analytics blocker ready');
+})();
+`;
+const BANNER_TEMPLATES = {
+    
+
+
+GDPR: {
+  type: 'gdpr',
+  content: `
+    <div class="consent-banner gdpr-banner">
+      <div class="banner-wrapper">
+        <!-- Initial View -->
+        <div class="banner-view initial-view">
+          <div class="banner-header">
+            <h2>We value your privacy</h2>
+            <button class="close-btn" onclick="closeBanner()">×</button>
+          </div>
+          <div class="banner-content">
+            <p>We use cookies to enhance your browsing experience, serve personalised ads or content, and analyse our traffic. By clicking "Accept All", you consent to our use of cookies.</p>
+          </div>
+          <div class="banner-footer">
+            <button class="customize-btn" onclick="showCustomizeView()">Customise</button>
+            <div class="action-buttons">
+              <button class="reject-all-btn" onclick="rejectAll()">Reject All</button>
+              <button class="accept-all-btn" onclick="acceptAll()">Accept All</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Customize View -->
+        <div class="banner-view customize-view" style="display: none;">
+          <div class="banner-header">
+            <h2>Customise Consent Preferences</h2>
+            <button class="close-btn" onclick="closeBanner()">×</button>
+          </div>
+          <div class="banner-content">
+            <div class="cookie-categories">
+                <label class="checkbox-container">
+                  <input type="checkbox" checked disabled>
+                  <span class="checkbox-label">Necessary</span>
+                </label>
+
+                <label class="checkbox-container">
+                  <input type="checkbox" id="functional">
+                  <span class="checkbox-label">Functional</span>
+                  
+                </label>
+
+                <label class="checkbox-container">
+                  <input type="checkbox" id="analytics">
+                  <span class="checkbox-label">Analytics</span>
+                </label>
+
+                <label class="checkbox-container">
+                  <input type="checkbox" id="performance">
+                  <span class="checkbox-label">Performance</span>
+                </label>
+
+                <label class="checkbox-container">
+                  <input type="checkbox" id="advertisement">
+                  <span class="checkbox-label">Advertisement</span>
+                </label>
+            </div>
+          </div>
+          <div class="banner-footer">
+            <button class="reject-all-btn" onclick="rejectAll()">Reject All</button>
+            <div class="action-buttons">
+              <button class="save-preferences-btn" onclick="savePreferences()">Save Preferences</button>
+              <button class="accept-all-btn" onclick="acceptAll()">Accept All</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `,
+  styles: `
+    .gdpr-banner {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 90%;
+      max-width: 600px;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+      font-family: Arial, sans-serif;
+      z-index: 9999;
+    }
+
+    .banner-wrapper {
+      padding: 20px;
+    }
+
+    .banner-view {
+      transition: all 0.3s ease;
+    }
+
+    .banner-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .banner-header h2 {
+      margin: 0;
+      font-size: 18px;
+      color: #1a1a1a;
+    }
+
+    .close-btn {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: #666;
+      padding: 5px;
+    }
+
+    .banner-content {
+      color: #4a4a4a;
+      line-height: 1.5;
+    }
+
+    .cookie-categories {
+      display: flex;
+      flex-direction: column;
+      justify-content:left;
+      gap: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .cookie-category {
+      border: 1px solid #eee;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 15px;
+    }
+
+    .checkbox-container {
+      display: flex;
+      flex-direction: column;
+      cursor: pointer;
+    }
+
+    .checkbox-container input[type="checkbox"] {
+      margin-right: 10px;
+    }
+
+    .checkbox-label {
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+
+    .category-description {
+      margin: 5px 0 0 0;
+      font-size: 0.9em;
+      color: #666;
+    }
+
+    .checkbox-container input[type="checkbox"]:disabled + .checkbox-label {
+      color: #999;
+      cursor: not-allowed;
+    }
+
+    .banner-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 20px;
+      gap: 10px;
+    }
+
+    .action-buttons {
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: none;
+      font-weight: 500;
+      transition: opacity 0.2s;
+    }
+
+    .customize-btn {
+      background: #f8f8f8;
+      border: 1px solid #ddd;
+      color: #666;
+    }
+
+    .reject-all-btn {
+      background: #dc3545;
+      color: white;
+    }
+
+    .accept-all-btn {
+      background: #4CAF50;
+      color: white;
+    }
+
+    .save-preferences-btn {
+      background: #2196F3;
+      color: white;
+    }
+
+    @media (max-width: 480px) {
+      .gdpr-banner {
+        bottom: 0;
+        width: 100%;
+        max-width: none;
+        border-radius: 12px 12px 0 0;
+        max-height: 90vh;
+      }
+
+      .banner-wrapper {
+        padding: 16px;
+        max-height: 90vh;
+        overflow-y: auto;
+      }
+
+      .cookie-categories {
+        max-height: 50vh;
+      }
+
+      .banner-footer {
+        flex-direction: column;
+      }
+
+      .action-buttons {
+        width: 100%;
+      }
+
+      button {
+        width: 100%;
+      }
+    }
+
+    .cookie-categories::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .cookie-categories::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 3px;
+    }
+
+    .cookie-categories::-webkit-scrollbar-thumb {
+      background: #888;
+      border-radius: 3px;
+    }
+
+    .cookie-categories::-webkit-scrollbar-thumb:hover {
+      background: #555;
+    }
+  `
+},
+
+
+CCPA: {
+  type: 'ccpa',
+  content: `
+    <div class="consent-banner ccpa-banner">
+      <div class="banner-wrapper">
+        <!-- Initial View -->
+        <div class="banner-view initial-view">
+          <div class="banner-header">
+            <h2>Privacy Notice for California Residents</h2>
+            <button class="close-btn" onclick="closeBanner()">×</button>
+          </div>
+          <div class="banner-content">
+            <p class="banner-description">
+              We use cookies and similar technologies to process your personal information. Under the California Consumer Privacy Act (CCPA), you have the right to opt-out of the sale of your personal information.
+            </p>
+          </div>
+          <div class="banner-footer">
+            <button class="customize-btn" onclick="showOptOutView()">Privacy Choices</button>
+            <div class="action-buttons">
+              <button class="reject-all-btn" onclick="rejectAll()">Do Not Sell</button>
+              <button class="accept-all-btn" onclick="acceptAll()">Accept All</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Opt-Out View -->
+        <div class="banner-view opt-out-view" style="display: none;">
+          <div class="banner-header">
+            <h2>Privacy Preferences</h2>
+            <button class="close-btn" onclick="closeBanner()">×</button>
+          </div>
+          <div class="banner-content">
+            <div class="cookie-categories">
+              <div class="cookie-category">
+                <label class="checkbox-container">
+                  <input type="checkbox" id="doNotSell">
+                  <span class="checkbox-label">Do Not Sell My Personal Information</span>
+                  <p class="category-description">Opt out of the sale of your personal information to third parties.</p>
+                </label>
+              </div>
+              
+              <div class="cookie-category">
+                <label class="checkbox-container">
+                  <input type="checkbox" id="analytics">
+                  <span class="checkbox-label">Analytics</span>
+                  <p class="category-description">Allow us to analyze website usage to improve your experience.</p>
+                </label>
+              </div>
+
+              <div class="cookie-category">
+                <label class="checkbox-container">
+                  <input type="checkbox" id="advertising">
+                  <span class="checkbox-label">Advertising</span>
+                  <p class="category-description">Allow personalized advertising and marketing.</p>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="banner-footer">
+            <button class="reject-all-btn" onclick="rejectAll()">Reject All</button>
+            <div class="action-buttons">
+              <button class="save-preferences-btn" onclick="saveOptOutPreferences()">Save Preferences</button>
+              <button class="accept-all-btn" onclick="acceptAll()">Accept All</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `,
+  styles: `
+    .ccpa-banner {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 90%;
+      max-width: 600px;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+      font-family: Arial, sans-serif;
+      z-index: 9999;
+    }
+
+    .banner-wrapper {
+      padding: 20px;
+    }
+
+    .banner-view {
+      transition: all 0.3s ease;
+    }
+
+    .banner-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .banner-header h2 {
+      margin: 0;
+      font-size: 18px;
+      color: #1a1a1a;
+    }
+
+    .close-btn {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: #666;
+      padding: 5px;
+    }
+
+    .banner-content {
+      color: #4a4a4a;
+      line-height: 1.5;
+    }
+
+    .cookie-categories {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .cookie-category {
+      border: 1px solid #eee;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 15px;
+    }
+
+    .checkbox-container {
+      display: flex;
+      flex-direction: column;
+      cursor: pointer;
+    }
+
+    .checkbox-container input[type="checkbox"] {
+      margin-right: 10px;
+    }
+
+    .checkbox-label {
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+
+    .category-description {
+      margin: 5px 0 0 0;
+      font-size: 0.9em;
+      color: #666;
+    }
+
+    .banner-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 20px;
+      gap: 10px;
+    }
+
+    .action-buttons {
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: none;
+      font-weight: 500;
+      transition: opacity 0.2s;
+    }
+
+    .customize-btn {
+      background: #f8f8f8;
+      border: 1px solid #ddd;
+      color: #666;
+    }
+
+    .reject-all-btn {
+      background: #dc3545;
+      color: white;
+    }
+
+    .accept-all-btn {
+      background: #4CAF50;
+      color: white;
+    }
+
+    .save-preferences-btn {
+      background: #2196F3;
+      color: white;
+    }
+
+    @media (max-width: 480px) {
+      .ccpa-banner {
+        bottom: 0;
+        width: 100%;
+        max-width: none;
+        border-radius: 12px 12px 0 0;
+        max-height: 90vh;
+      }
+
+      .banner-wrapper {
+        padding: 16px;
+        max-height: 90vh;
+        overflow-y: auto;
+      }
+
+      .cookie-categories {
+        max-height: 50vh;
+      }
+
+      .banner-footer {
+        flex-direction: column;
+      }
+
+      .action-buttons {
+        width: 100%;
+      }
+
+      button {
+        width: 100%;
+      }
+    }
+
+    .cookie-categories::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .cookie-categories::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 3px;
+    }
+
+    .cookie-categories::-webkit-scrollbar-thumb {
+      background: #888;
+      border-radius: 3px;
+    }
+
+    .cookie-categories::-webkit-scrollbar-thumb:hover {
+      background: #555;
+    }
+  `
+},
+  
+    DEFAULT: {
+      type: 'default',
+      content: `
+        <div class="consent-banner default-banner">
+          <div class="banner-wrapper">
+            <div class="banner-header">
+              <h2>🍪 Cookie Settings</h2>
+              <button class="close-btn" onclick="closeBanner()">×</button>
+            </div>
+            <div class="banner-content">
+              <p class="banner-description">
+                We use cookies to enhance your browsing experience and analyze our traffic.
+              </p>
+            </div>
+            <div class="banner-footer">
+              <button class="learn-more-btn" onclick="learnMore()">Learn More</button>
+              <div class="action-buttons">
+                <button class="btn decline-btn" onclick="declineCookies()">Decline</button>
+                <button class="btn accept-btn" onclick="acceptCookies()">Accept</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `,
+      styles: `
+        .default-banner {
+          position: fixed;
+          bottom: 20px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 90%;
+          max-width: 400px;
+          background: #fff;
+          border-radius: 12px;
+          box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+          font-family: Arial, sans-serif;
+          z-index: 9999;
+        }
+  
+        .banner-wrapper {
+          position: relative;
+          padding: 20px;
+        }
+  
+        .banner-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 15px;
+        }
+  
+        .banner-header h2 {
+          margin: 0;
+          font-size: 18px;
+          color: #1a1a1a;
+        }
+  
+        .close-btn {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          background: none;
+          border: none;
+          font-size: 24px;
+          cursor: pointer;
+          color: #666;
+          padding: 5px;
+          line-height: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          transition: background-color 0.2s;
+        }
+  
+        .close-btn:hover {
+          background-color: #f0f0f0;
+        }
+  
+        .banner-description {
+          color: #4a4a4a;
+          line-height: 1.5;
+          margin-bottom: 20px;
+        }
+  
+        .banner-footer {
+          display: flex;
+          flex-direction: column;
+          gap: 15px;
+        }
+  
+        .action-buttons {
+          display: flex;
+          gap: 10px;
+          justify-content: center;
+        }
+  
+        .btn {
+          flex: 1;
+          padding: 12px 24px;
+          border-radius: 6px;
+          cursor: pointer;
+          border: none;
+          font-weight: 500;
+          font-size: 14px;
+          transition: opacity 0.2s;
+          min-width: 120px;
+          text-align: center;
+        }
+  
+        .btn:hover {
+          opacity: 0.9;
+        }
+  
+        .learn-more-btn {
+          background: none;
+          border: 1px solid #6c757d;
+          color: #6c757d;
+          padding: 8px 16px;
+          border-radius: 6px;
+          cursor: pointer;
+          font-size: 14px;
+          transition: background-color 0.2s;
+          text-align: center;
+        }
+  
+        .learn-more-btn:hover {
+          background-color: #f8f9fa;
+        }
+  
+        .accept-btn {
+          background: #4CAF50;
+          color: white;
+        }
+  
+        .decline-btn {
+          background: #dc3545;
+          color: white;
+        }
+  
+        @media (max-width: 480px) {
+          .default-banner {
+            bottom: 0;
+            width: 100%;
+            max-width: none;
+            border-radius: 12px 12px 0 0;
+          }
+  
+          .banner-wrapper {
+            padding: 16px;
+          }
+  
+          .banner-footer {
+            gap: 10px;
+          }
+  
+          .action-buttons {
+            width: 100%;
+          }
+  
+          .btn {
+            min-width: unset;
+          }
+  
+          .learn-more-btn {
+            width: 100%;
+          }
+        }
+      `
+    
+  }
+    };
+    
+
+
+const corsHeaders = {
+  "Access-Control-Allow-Orienein": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Accept, X-Request-Token, Authorization",
+  "Access-Control-Allow-Credentials": "true",
+  "Access-Control-Max-Age": "86400",
+};
+
+// CORS handling function
+async function handleCORS(request) {
+  // Handle CORS preflight requests
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        ...corsHeaders,
+      
+        "Access-Control-Allow-Origin": request.headers.get("Origin") || "*",
+      }
+    });
+  }
+  // For actual requests, validate origin
+  const origin = request.headers.get("Origin");
+  if (origin) {
+  
+    corsHeaders["Access-Control-Allow-Origin"] = origin;
+  }
+  return null; 
+}
+
+
+function formatCookieOptions(options) {
+  const parts = [];
+  if (options.path) parts.push(`Path=${options.path}`);
+  if (options.maxAge) parts.push(`Max-Age=${options.maxAge}`);
+  if (options.secure) parts.push('Secure');
+  if (options.httpOnly) parts.push('HttpOnly');
+  if (options.sameSite) parts.push(`SameSite=${options.sameSite}`);
+  return parts.join('; ');
+}
+async function validateToken(token, env) {
+  try {
+    if (!token || typeof token !== 'string') return false;
+    const kvKey = `token:${token}`;
+    const storedToken = await env.CMP_MANUAL.get(kvKey);
+    if (storedToken === 'valid') {
+      await env.CMP_MANUAL.delete(kvKey);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Validation error:', error);
+    return false;
+  }
+}
+
+async function generateToken(env) {
+  try {
+    const buffer = new Uint8Array(32);
+    crypto.getRandomValues(buffer);
+    const token = btoa(String.fromCharCode(...buffer))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+
+    const kvKey = `token:${token}`;
+    await env.CMP_MANUAL.put(kvKey, 'valid', { expirationTtl: 300 });
+    return token;
+  } catch (error) {
+    console.error('Token generation error:', error);
+    throw error;
+  }
+}
+function isEUCountry(country) {
+  const euCountries = [
+    'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
+    'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL',
+    'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'
+  ];
+  return euCountries.includes(country);
+}
+
+  // Location detection function
+  async function detectLocation(request) {
+    try {
+       // Set country to US for testing CCPA
+      // const country = 'US';  // US for United States
+      // const continent = 'NA'; // NA for North America
+      //  const country = 'HR';  // GB is the country code for United Kingdom
+      // const continent = 'EU';  // EU is the continent code for Europe
+      
+       const country = request.headers.get('CF-IPCountry') || 'UNKNOWN';
+      const continent = request.headers.get('CF-IPContinent') || 'UNKNOWN';
+      
+      console.log('Detected location:', { country, continent });
+      
+      return {
+        country,
+        continent,
+        isEU: isEUCountry(country)
+      };
+    } catch (error) {
+      console.error('Location detection error:', error);
+      return { country: 'UNKNOWN', continent: 'UNKNOWN', isEU: false };
+    }
+  }
+  // Banner template selection based on location
+  function selectBannerTemplate(locationData) {
+    console.log('Selecting banner for:', locationData);
+  
+    if (locationData.isEU) {
+      return 'GDPR';
+    }
+    
+    if (locationData.country === 'US') {
+      return 'CCPA';
+    }
+    
+    return 'DEFAULT';
+  }
+  async function generateEncryptionKey() {
+    return await crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      true,
+      ['encrypt']
+    );
+  }
+  
+  async function encryptData(data, key) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encoded = new TextEncoder().encode(data);
+    
+    const encrypted = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      encoded
+    );
+  
+    return {
+      encrypted: new Uint8Array(encrypted),
+      iv
+    };
+  }
+   
+  async function generateCombinedScript(request) {
+    try {
+      const locationData = await detectLocation(request);
+      const bannerType = selectBannerTemplate(locationData);
+      const bannerTemplate = BANNER_TEMPLATES[bannerType];
+  
+      const script = `
+        (function() {
+          console.log('Starting CMP initialization...');
+          function defineHandlers() {
+          // Define global functions first
+          window.acceptCookies = function() {
+              console.log('Accept clicked');
+              localStorage.setItem('cookieConsent', 'accepted');
+              if (window.__ANALYTICS_BLOCKER__) {
+                  window.__ANALYTICS_BLOCKER__.enabled = false;
+                  console.log('Analytics blocker disabled');
+              }
+              closeBanner();
+          };
+  
+          window.declineCookies = function() {
+              console.log('Reject clicked');
+              localStorage.setItem('cookieConsent', 'rejected');
+              if (window.__ANALYTICS_BLOCKER__) {
+                  window.__ANALYTICS_BLOCKER__.enabled = true;
+                  console.log('Analytics blocker enabled');
+              }
+              closeBanner();
+          };
+  
+          window.learnMore = function() {
+              window.location.href = '/privacy-policy';
+          };
+  
+          window.closeBanner = function() {
+              // Updated to work with all banner types
+              const banner = document.querySelector('.consent-banner');
+              if (banner) {
+                  banner.style.transform = 'translateY(100%)';
+                  setTimeout(() => {
+                      banner.remove();
+                      console.log('Banner removed');
+                  }, 500);
+              }
+          };
+          // GDPR specific functions
+      window.showCustomizeView = function() {
+        console.log('Showing customize view');
+        document.querySelector('.initial-view').style.display = 'none';
+        document.querySelector('.customize-view').style.display = 'block';
+      };
+
+      window.toggleDescription = function() {
+        const description = document.querySelector('.consent-description');
+        const button = document.querySelector('.show-less-btn');
+        if (description.style.maxHeight) {
+          description.style.maxHeight = null;
+          button.textContent = 'Show less';
+        } else {
+          description.style.maxHeight = description.scrollHeight + 'px';
+          button.textContent = 'Show more';
+        }
+      };
+
+      window.savePreferences = function() {
+        const preferences = {
+          functional: document.getElementById('functional').checked,
+          analytics: document.getElementById('analytics').checked,
+          performance: document.getElementById('performance').checked,
+          advertisement: document.getElementById('advertisement').checked
+        };
+        
+        localStorage.setItem('cookiePreferences', JSON.stringify({
+          ...preferences,
+          timestamp: new Date().toISOString()
+        }));
+
+        if (window.__ANALYTICS_BLOCKER__) {
+          window.__ANALYTICS_BLOCKER__.enabled = !preferences.analytics;
+        }
+
+        const event = new CustomEvent('cookiePreferencesUpdated', {
+          detail: preferences
+        });
+        document.dispatchEvent(event);
+        
+        closeBanner();
+      };
+
+      window.acceptAll = function() {
+        const preferences = {
+          functional: true,
+          analytics: true,
+          performance: true,
+          advertisement: true
+        };
+        
+        localStorage.setItem('cookiePreferences', JSON.stringify({
+          ...preferences,
+          timestamp: new Date().toISOString()
+        }));
+
+        if (window.__ANALYTICS_BLOCKER__) {
+          window.__ANALYTICS_BLOCKER__.enabled = false;
+        }
+
+        const event = new CustomEvent('cookiePreferencesUpdated', {
+          detail: preferences
+        });
+        document.dispatchEvent(event);
+        
+        closeBanner();
+      };
+
+      window.rejectAll = function() {
+        const preferences = {
+          functional: false,
+          analytics: false,
+          performance: false,
+          advertisement: false
+        };
+        
+        localStorage.setItem('cookiePreferences', JSON.stringify({
+          ...preferences,
+          timestamp: new Date().toISOString()
+        }));
+
+        if (window.__ANALYTICS_BLOCKER__) {
+          window.__ANALYTICS_BLOCKER__.enabled = true;
+        }
+
+        const event = new CustomEvent('cookiePreferencesUpdated', {
+          detail: preferences
+        });
+        document.dispatchEvent(event);
+        
+        closeBanner();
+      };
+
+      console.log('Handlers defined:', {
+        showCustomizeView: !!window.showCustomizeView,
+        toggleDescription: !!window.toggleDescription,
+        savePreferences: !!window.savePreferences,
+        acceptAll: !!window.acceptAll,
+        rejectAll: !!window.rejectAll,
+        closeBanner: !!window.closeBanner
+      });
+    }
+    
+    // Define handlers immediately
+    defineHandlers();
+  
+          // 1. Initialize Analytics Blocker
+          ${ANALYTICS_BLOCKER}
+          console.log('Analytics blocker initialized');
+  
+          // 2. Add banner and initialize handlers
+          function initializeBanner() {
+            // Add styles
+            const style = document.createElement('style');
+            style.textContent = ${JSON.stringify(bannerTemplate.styles)};
+            document.head.appendChild(style);
+            
+            // Add banner
+            const div = document.createElement('div');
+            div.innerHTML = ${JSON.stringify(bannerTemplate.content)};
+            document.body.appendChild(div);
+            console.log('Banner added to DOM');
+            console.log('Banner handlers initialized');
+          }
+  
+          // Check for existing consent
+          const existingConsent = localStorage.getItem('cookieConsent');
+          if (existingConsent) {
+            console.log('Existing consent found:', existingConsent);
+            if (window.__ANALYTICS_BLOCKER__) {
+              window.__ANALYTICS_BLOCKER__.enabled = (existingConsent === 'rejected');
+              console.log('Analytics blocker state set based on existing consent');
+            }
+            return;
+          }
+  
+          // Initialize when DOM is ready
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeBanner);
+          } else {
+            initializeBanner();
+          }
+        })();
+      `;
+       // Generate encryption key
+    const key = await generateEncryptionKey();
+    const keyBytes = await crypto.subtle.exportKey('raw', key);
+    
+    // Encrypt the HTML and styles
+    const contentToEncrypt = JSON.stringify({
+      html: bannerTemplate.content,
+      styles: bannerTemplate.styles
+    });
+    
+    const { encrypted, iv } = await encryptData(contentToEncrypt, key);
+
+    // Convert binary data to base64
+    const keyBase64 = btoa(String.fromCharCode(...new Uint8Array(keyBytes)));
+    const ivBase64 = btoa(String.fromCharCode(...iv));
+    const encryptedBase64 = btoa(String.fromCharCode(...encrypted));
+
+    // Create the wrapper script
+    const wrapperScript = `
+    (async () => {
+      window.__CMP_STATE__ = window.__CMP_STATE__ || {
+        loading: false,
+        loaded: false,
+        initialized: false
+      };
+
+      try {
+        window.__CMP_STATE__.loading = true;
+
+        // Decrypt content
+        const keyMaterial = Uint8Array.from(atob('${keyBase64}'), c => c.charCodeAt(0));
+        const iv = Uint8Array.from(atob('${ivBase64}'), c => c.charCodeAt(0));
+        const encryptedData = Uint8Array.from(atob('${encryptedBase64}'), c => c.charCodeAt(0));
+
+        const key = await crypto.subtle.importKey(
+          'raw',
+          keyMaterial,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['decrypt']
+        );
+
+        const decrypted = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv },
+          key,
+          encryptedData
+        );
+
+        const content = JSON.parse(new TextDecoder().decode(decrypted));
+
+        // Add styles
+        const style = document.createElement('style');
+        style.textContent = content.styles;
+        document.head.appendChild(style);
+
+        // Add banner
+        const div = document.createElement('div');
+        div.innerHTML = content.html;
+        document.body.appendChild(div);
+
+        ${ANALYTICS_BLOCKER}
+
+        // Define handlers
+        ${script}
+
+        window.__CMP_STATE__.loaded = true;
+        window.__CMP_STATE__.initialized = true;
+      } catch (error) {
+        console.error('CMP initialization error:', error);
+        window.__CMP_STATE__.loading = false;
+      }
+    })();
+    `;
+  
+      return new Response(wrapperScript, {
+        headers: {
+          "Content-Type": "application/javascript",
+          "Cache-Control": "no-store",
+          ...corsHeaders
+        }
+      });
+  
+    } catch (error) {
+      console.error('Script generation error:', error);
+      return new Response(
+        `console.error('CMP Error:', ${JSON.stringify(error.message)});`,
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/javascript",
+            ...corsHeaders
+          }
+        }
+      );
+    }
+  }
+async function importKey(rawKey) {
+  return await crypto.subtle.importKey(
+    'raw',
+    rawKey,
+    { name: 'AES-GCM' },
+    false,
+    ['decrypt']
+  );
+}
+
+ 
+async function handleRequest(request, env) {
+  try {
+    const corsResponse = await handleCORS(request);
+    if (corsResponse) return corsResponse;
+
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    // Handle token request
+    if (path === "/cmp/request-token") {
+      const token = await generateToken(env);
+      return new Response(JSON.stringify({ token }), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          ...corsHeaders
+        },
+      });
+    }
+
+    if (path === "/cmp/cmp-script") {
+      const token = url.searchParams.get("token");
+      console.log('Script requested with token:', token);
+    
+      const isValid = await validateToken(token, env);
+      if (!isValid) {
+        return new Response("Invalid token", { 
+          status: 403, 
+          headers: corsHeaders 
+        });
+      }
+    
+   
+      return await generateCombinedScript(request);
+    }
+    return new Response("Worker running", {
+      status: 200,
+      headers: corsHeaders
+    });
+  } catch (error) {
+    console.error('Request handler error:', error);
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: {
+        "Content-Type": "application/json",
+        ...corsHeaders
+      }
+    });
+  }
+}
+
+// 2. Main worker export
+export default {
+  async fetch(request, env, ctx) {
+    return handleRequest(request, env);
+  }
+};
