@@ -1,4 +1,4 @@
-<script>
+
 (async () => {
   // Initialize state object
   window.__CMP_STATE__ = window.__CMP_STATE__ || {
@@ -232,4 +232,4 @@
     console.error('Fatal error in CMP initialization:', error);
   }
 })();
-</script>
+
